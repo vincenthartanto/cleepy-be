@@ -4,6 +4,9 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -43,9 +46,11 @@ public class Clip extends PanacheEntityBase{
     @Column(name = "analysis_result")
     public String analysisResult;
     
+    @CreationTimestamp
     @Column(name = "created_at")
     public LocalDateTime createdAt;
     
+    @UpdateTimestamp
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
 

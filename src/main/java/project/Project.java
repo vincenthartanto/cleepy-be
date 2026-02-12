@@ -3,6 +3,9 @@ package project;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -28,9 +31,11 @@ public class Project extends PanacheEntityBase {
     @Column(name = "user_id")
     public UUID userId;
     
+    @CreationTimestamp
     @Column(name = "created_at")
     public LocalDateTime createdAt;
     
+    @UpdateTimestamp
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
     
