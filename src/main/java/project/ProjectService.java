@@ -14,21 +14,17 @@ public class ProjectService {
 
     @Inject
     ProjectRepository projectRepository;
-    
+
     @Inject
     ProjectMapper projectMapper;
-    
+
     public Uni<List<Project>> getProjects(SpecificationRequest request) {
         return projectRepository.findByTitleLike(request);
     }
 
-
     @WithTransaction
-    public Uni<Project> createProject(ProjectRequest request) {
-        Project project = projectMapper.toEntity(request);
+    public Uni<Project> createProject(String userId, ProjectRequest request) {
+        Project project = projectMapper.toEntity(request, userId);
         return projectRepository.persist(project);
     }
 }
-
-
-    

@@ -2,6 +2,7 @@ package project;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import java.util.Collections;
@@ -34,215 +35,116 @@ public class ProjectServiceTest {
     @Test
     @RunOnVertxContext
     void testCreateProject_whenValidRequest_shouldReturnPersistedProject(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
-        ProjectRequest request = new ProjectRequest(
-            "Test Project", userId.toString(), "active", "https://thumbnail.url"
-        );
+        String userId = "firebase-uid-123";
+        ProjectRequest request = new ProjectRequest("Test Project", null);
 
         Project mockProject = new Project();
         mockProject.id = UUID.randomUUID();
         mockProject.title = request.title();
         mockProject.userId = userId;
-        mockProject.status = request.status();
-        mockProject.thumbnailUrl = request.thumbnailUrl();
+        mockProject.status = "processing";
 
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
+        when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
 
-        asserter.assertThat(() -> projectService.createProject(request),
-            project -> {
-                assertNotNull(project);
-                assertEquals("Test Project", project.title);
-                assertEquals(userId, project.userId);
-                assertEquals("active", project.status);
-                assertEquals("https://thumbnail.url", project.thumbnailUrl);
-                verify(projectMapper).toEntity(request);
-                verify(projectRepository).persist(any(Project.class));
-            });
+        asserter.assertThat(() -> projectService.createProject(userId, request),
+                project -> {
+                    assertNotNull(project);
+                    assertEquals("Test Project", project.title);
+                    assertEquals(userId, project.userId);
+                    assertEquals("processing", project.status);
+                    verify(projectMapper).toEntity(eq(request), eq(userId));
+                    verify(projectRepository).persist(any(Project.class));
+                });
     }
 
     @Test
     @RunOnVertxContext
-    void testCreateProject_whenNullThumbnail_shouldReturnProjectWithNullThumbnail(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
-        ProjectRequest request = new ProjectRequest(
-            "No Thumbnail Project", userId.toString(), "active", null
-        );
+    void testCreateProject_whenWithCustomPrompt_shouldReturnPersistedProject(UniAsserter asserter) {
+        String userId = "firebase-uid-456";
+        ProjectRequest request = new ProjectRequest("Custom Prompt Project", "Analyze viral moments");
 
         Project mockProject = new Project();
         mockProject.id = UUID.randomUUID();
         mockProject.title = request.title();
         mockProject.userId = userId;
-        mockProject.status = request.status();
-        mockProject.thumbnailUrl = null;
+        mockProject.status = "processing";
 
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
+        when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
 
-        asserter.assertThat(() -> projectService.createProject(request),
-            project -> {
-                assertNotNull(project);
-                assertEquals("No Thumbnail Project", project.title);
-                assertNull(project.thumbnailUrl);
-            });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateProject_whenDraftStatus_shouldReturnProjectWithDraftStatus(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
-        ProjectRequest request = new ProjectRequest(
-            "Draft Project", userId.toString(), "draft", "https://thumb.url"
-        );
-
-        Project mockProject = new Project();
-        mockProject.id = UUID.randomUUID();
-        mockProject.title = request.title();
-        mockProject.userId = userId;
-        mockProject.status = "draft";
-
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
-        when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
-
-        asserter.assertThat(() -> projectService.createProject(request),
-            project -> {
-                assertNotNull(project);
-                assertEquals("draft", project.status);
-            });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateProject_whenInvalidUserIdFormat_shouldThrowIllegalArgumentException(UniAsserter asserter) {
-        ProjectRequest request = new ProjectRequest(
-            "Test Project", "not-a-valid-uuid", "active", "https://thumb.url"
-        );
-
-        when(projectMapper.toEntity(request)).thenThrow(new IllegalArgumentException("Invalid UUID string: not-a-valid-uuid"));
-
-        asserter.assertFailedWith(() -> projectService.createProject(request),
-            throwable -> {
-                assertTrue(throwable instanceof IllegalArgumentException);
-                verify(projectRepository, never()).persist(any(Project.class));
-            });
+        asserter.assertThat(() -> projectService.createProject(userId, request),
+                project -> {
+                    assertNotNull(project);
+                    assertEquals("Custom Prompt Project", project.title);
+                    assertEquals(userId, project.userId);
+                });
     }
 
     @Test
     @RunOnVertxContext
     void testCreateProject_whenPersistFails_shouldThrowRuntimeException(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
-        ProjectRequest request = new ProjectRequest(
-            "Test Project", userId.toString(), "active", "https://thumb.url"
-        );
+        String userId = "firebase-uid-789";
+        ProjectRequest request = new ProjectRequest("Test Project", null);
 
         Project mockProject = new Project();
         mockProject.title = request.title();
 
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
+        when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class)))
-            .thenReturn(Uni.createFrom().failure(new RuntimeException("Database error")));
+                .thenReturn(Uni.createFrom().failure(new RuntimeException("Database error")));
 
-        asserter.assertFailedWith(() -> projectService.createProject(request),
-            throwable -> {
-                assertTrue(throwable instanceof RuntimeException);
-                assertEquals("Database error", throwable.getMessage());
-            });
+        asserter.assertFailedWith(() -> projectService.createProject(userId, request),
+                throwable -> {
+                    assertTrue(throwable instanceof RuntimeException);
+                    assertEquals("Database error", throwable.getMessage());
+                });
     }
 
     @Test
     @RunOnVertxContext
-    void testCreateProject_whenNullUserId_shouldThrowNullPointerException(UniAsserter asserter) {
-        ProjectRequest request = new ProjectRequest(
-            "Test Project", null, "active", "https://thumb.url"
-        );
-
-        when(projectMapper.toEntity(request)).thenThrow(new NullPointerException("userId is null"));
-
-        asserter.assertFailedWith(() -> projectService.createProject(request),
-            throwable -> {
-                assertTrue(throwable instanceof NullPointerException);
-                verify(projectRepository, never()).persist(any(Project.class));
-            });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateProject_whenEmptyStringFields_shouldReturnProjectWithEmptyStrings(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
-        ProjectRequest request = new ProjectRequest(
-            "", userId.toString(), "", ""
-        );
+    void testCreateProject_whenEmptyTitle_shouldReturnProjectWithEmptyTitle(UniAsserter asserter) {
+        String userId = "firebase-uid-000";
+        ProjectRequest request = new ProjectRequest("", null);
 
         Project mockProject = new Project();
         mockProject.id = UUID.randomUUID();
         mockProject.title = "";
         mockProject.userId = userId;
-        mockProject.status = "";
-        mockProject.thumbnailUrl = "";
+        mockProject.status = "processing";
 
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
+        when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
 
-        asserter.assertThat(() -> projectService.createProject(request),
-            project -> {
-                assertNotNull(project);
-                assertEquals("", project.title);
-                assertEquals("", project.status);
-                assertEquals("", project.thumbnailUrl);
-            });
+        asserter.assertThat(() -> projectService.createProject(userId, request),
+                project -> {
+                    assertNotNull(project);
+                    assertEquals("", project.title);
+                });
     }
 
     @Test
     @RunOnVertxContext
     void testCreateProject_whenVeryLongTitle_shouldReturnProjectWithLongTitle(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
+        String userId = "firebase-uid-long";
         String longTitle = "A".repeat(1000);
-        ProjectRequest request = new ProjectRequest(
-            longTitle, userId.toString(), "active", "https://thumb.url"
-        );
+        ProjectRequest request = new ProjectRequest(longTitle, null);
 
         Project mockProject = new Project();
         mockProject.id = UUID.randomUUID();
         mockProject.title = longTitle;
         mockProject.userId = userId;
-        mockProject.status = "active";
+        mockProject.status = "processing";
 
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
+        when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
 
-        asserter.assertThat(() -> projectService.createProject(request),
-            project -> {
-                assertNotNull(project);
-                assertEquals(1000, project.title.length());
-                assertEquals(longTitle, project.title);
-            });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateProject_whenAllNullOptionalFields_shouldReturnProjectWithNulls(UniAsserter asserter) {
-        UUID userId = UUID.randomUUID();
-        ProjectRequest request = new ProjectRequest(
-            "Minimal Project", userId.toString(), null, null
-        );
-
-        Project mockProject = new Project();
-        mockProject.id = UUID.randomUUID();
-        mockProject.title = request.title();
-        mockProject.userId = userId;
-        mockProject.status = null;
-        mockProject.thumbnailUrl = null;
-
-        when(projectMapper.toEntity(request)).thenReturn(mockProject);
-        when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
-
-        asserter.assertThat(() -> projectService.createProject(request),
-            project -> {
-                assertNotNull(project);
-                assertEquals("Minimal Project", project.title);
-                assertNull(project.status);
-                assertNull(project.thumbnailUrl);
-            });
+        asserter.assertThat(() -> projectService.createProject(userId, request),
+                project -> {
+                    assertNotNull(project);
+                    assertEquals(1000, project.title.length());
+                    assertEquals(longTitle, project.title);
+                });
     }
 
     @Test
@@ -262,15 +164,15 @@ public class ProjectServiceTest {
         project2.title = "Test Project 2";
 
         when(projectRepository.findByTitleLike(request))
-            .thenReturn(Uni.createFrom().item(List.of(project1, project2)));
+                .thenReturn(Uni.createFrom().item(List.of(project1, project2)));
 
         asserter.assertThat(() -> projectService.getProjects(request),
-            projects -> {
-                assertNotNull(projects);
-                assertEquals(2, projects.size());
-                assertEquals("Test Project 1", projects.get(0).title);
-                assertEquals("Test Project 2", projects.get(1).title);
-            });
+                projects -> {
+                    assertNotNull(projects);
+                    assertEquals(2, projects.size());
+                    assertEquals("Test Project 1", projects.get(0).title);
+                    assertEquals("Test Project 2", projects.get(1).title);
+                });
     }
 
     @Test
@@ -282,13 +184,13 @@ public class ProjectServiceTest {
         request.size = 20;
 
         when(projectRepository.findByTitleLike(request))
-            .thenReturn(Uni.createFrom().item(Collections.emptyList()));
+                .thenReturn(Uni.createFrom().item(Collections.emptyList()));
 
         asserter.assertThat(() -> projectService.getProjects(request),
-            projects -> {
-                assertNotNull(projects);
-                assertTrue(projects.isEmpty());
-            });
+                projects -> {
+                    assertNotNull(projects);
+                    assertTrue(projects.isEmpty());
+                });
     }
 
     @Test
@@ -304,13 +206,13 @@ public class ProjectServiceTest {
         project.title = "Any Project";
 
         when(projectRepository.findByTitleLike(request))
-            .thenReturn(Uni.createFrom().item(List.of(project)));
+                .thenReturn(Uni.createFrom().item(List.of(project)));
 
         asserter.assertThat(() -> projectService.getProjects(request),
-            projects -> {
-                assertNotNull(projects);
-                assertEquals(1, projects.size());
-            });
+                projects -> {
+                    assertNotNull(projects);
+                    assertEquals(1, projects.size());
+                });
     }
 
     @Test
@@ -322,12 +224,12 @@ public class ProjectServiceTest {
         request.size = 20;
 
         when(projectRepository.findByTitleLike(request))
-            .thenReturn(Uni.createFrom().failure(new RuntimeException("Database unavailable")));
+                .thenReturn(Uni.createFrom().failure(new RuntimeException("Database unavailable")));
 
         asserter.assertFailedWith(() -> projectService.getProjects(request),
-            throwable -> {
-                assertTrue(throwable instanceof RuntimeException);
-                assertEquals("Database unavailable", throwable.getMessage());
-            });
+                throwable -> {
+                    assertTrue(throwable instanceof RuntimeException);
+                    assertEquals("Database unavailable", throwable.getMessage());
+                });
     }
 }

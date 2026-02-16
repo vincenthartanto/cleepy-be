@@ -1,0 +1,1 @@
+ALTER TABLE projects ALTER COLUMN user_id TYPE VARCHAR USING user_id::VARCHAR;

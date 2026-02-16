@@ -17,26 +17,26 @@ import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 @Entity
 @Table(name = "projects")
 public class Project extends PanacheEntityBase {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     public UUID id;
-    
+
     public String title;
     public String status;
-    
+
     @Column(name = "thumbnail_url")
     public String thumbnailUrl;
-    
+
     @Column(name = "user_id")
-    public UUID userId;
-    
+    public String userId;
+
     @CreationTimestamp
     @Column(name = "created_at")
     public LocalDateTime createdAt;
-    
+
     @UpdateTimestamp
     @Column(name = "updated_at")
     public LocalDateTime updatedAt;
-    
+
 }
