@@ -31,6 +31,9 @@ public class Project extends PanacheEntityBase {
     @Column(name = "user_id")
     public String userId;
 
+    @Column(name = "source_url")
+    public String sourceUrl;
+
     @CreationTimestamp
     @Column(name = "created_at")
     public LocalDateTime createdAt;

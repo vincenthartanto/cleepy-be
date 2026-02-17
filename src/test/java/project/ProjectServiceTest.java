@@ -11,7 +11,12 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import clip.Clip;
+import clip.ClipRepository;
 import common.dto.request.SpecificationRequest;
+import integration.AiClipperClient;
+import integration.dto.VideoProcessRequest;
+import integration.dto.VideoProcessResponse;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.vertx.RunOnVertxContext;
@@ -20,6 +25,9 @@ import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.ForbiddenException;
 import jakarta.ws.rs.NotFoundException;
+import org.eclipse.microprofile.rest.client.inject.RestClient;
+import project.dto.ProjectCompletionDTO;
+import project.dto.ProjectCompletionDTO.ClipDTO;
 import project.dto.ProjectRequest;
 
 @QuarkusTest
@@ -31,6 +39,13 @@ public class ProjectServiceTest {
     @InjectMock
     ProjectMapper projectMapper;
 
+    @InjectMock
+    @RestClient
+    AiClipperClient aiClipperClient;
+
+    @InjectMock
+    ClipRepository clipRepository;
+
     @Inject
     ProjectService projectService;
 
@@ -40,25 +55,53 @@ public class ProjectServiceTest {
     @RunOnVertxContext
     void testCreateProject_whenValidRequest_shouldReturnPersistedProject(UniAsserter asserter) {
         String userId = "firebase-uid-123";
-        ProjectRequest request = new ProjectRequest("Test Project", null);
+        ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc");
 
         Project mockProject = new Project();
         mockProject.id = UUID.randomUUID();
         mockProject.title = request.title();
         mockProject.userId = userId;
-        mockProject.status = "processing";
+        mockProject.status = "PROCESSING";
+        mockProject.sourceUrl = request.sourceUrl();
 
         when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
+        when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
+                .thenReturn(Uni.createFrom()
+                        .item(new VideoProcessResponse("Processing started", mockProject.id.toString())));
 
         asserter.assertThat(() -> projectService.createProject(userId, request),
                 project -> {
                     assertNotNull(project);
                     assertEquals("Test Project", project.title);
                     assertEquals(userId, project.userId);
-                    assertEquals("processing", project.status);
+                    assertEquals("PROCESSING", project.status);
+                    assertEquals("https://youtube.com/watch?v=abc", project.sourceUrl);
                     verify(projectMapper).toEntity(eq(request), eq(userId));
                     verify(projectRepository).persist(any(Project.class));
+                    verify(aiClipperClient).processVideo(any(VideoProcessRequest.class));
+                });
+    }
+
+    @Test
+    @RunOnVertxContext
+    void testCreateProject_whenPythonServiceFails_shouldThrowException(UniAsserter asserter) {
+        String userId = "firebase-uid-789";
+        ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc");
+
+        Project mockProject = new Project();
+        mockProject.id = UUID.randomUUID();
+        mockProject.title = request.title();
+
+        when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
+        when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
+        when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
+                .thenReturn(Uni.createFrom().failure(new RuntimeException("Python service unreachable")));
+
+        asserter.assertFailedWith(() -> projectService.createProject(userId, request),
+                throwable -> {
+                    assertTrue(throwable instanceof RuntimeException);
+                    assertEquals("Python service unreachable", throwable.getMessage());
                 });
     }
 
@@ -66,7 +109,7 @@ public class ProjectServiceTest {
     @RunOnVertxContext
     void testCreateProject_whenPersistFails_shouldThrowRuntimeException(UniAsserter asserter) {
         String userId = "firebase-uid-789";
-        ProjectRequest request = new ProjectRequest("Test Project", null);
+        ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc");
 
         Project mockProject = new Project();
         mockProject.title = request.title();
@@ -79,6 +122,67 @@ public class ProjectServiceTest {
                 throwable -> {
                     assertTrue(throwable instanceof RuntimeException);
                     assertEquals("Database error", throwable.getMessage());
+                });
+    }
+
+    // ── handleCompletion tests ──
+
+    @Test
+    @RunOnVertxContext
+    void testHandleCompletion_whenCompleted_shouldUpdateStatusAndSaveClips(UniAsserter asserter) {
+        UUID projectId = UUID.randomUUID();
+        Project mockProject = new Project();
+        mockProject.id = projectId;
+        mockProject.status = "PROCESSING";
+
+        List<ClipDTO> clipDTOs = List.of(
+                new ClipDTO("Funny Moment", "A funny moment", "http://localhost:8000/static/clip1.mp4", 10.0, 25.0,
+                        95.5),
+                new ClipDTO("Epic Scene", "An epic scene", "http://localhost:8000/static/clip2.mp4", 45.0, 60.0, 88.0));
+
+        ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", clipDTOs);
+
+        when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
+        when(clipRepository.persist(anyList())).thenReturn(Uni.createFrom().voidItem());
+
+        asserter.assertThat(() -> projectService.handleCompletion(projectId, completion),
+                result -> {
+                    assertEquals("COMPLETED", mockProject.status);
+                    verify(clipRepository).persist(anyList());
+                });
+    }
+
+    @Test
+    @RunOnVertxContext
+    void testHandleCompletion_whenFailed_shouldUpdateStatusWithoutClips(UniAsserter asserter) {
+        UUID projectId = UUID.randomUUID();
+        Project mockProject = new Project();
+        mockProject.id = projectId;
+        mockProject.status = "PROCESSING";
+
+        ProjectCompletionDTO completion = new ProjectCompletionDTO("FAILED", Collections.emptyList());
+
+        when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
+
+        asserter.assertThat(() -> projectService.handleCompletion(projectId, completion),
+                result -> {
+                    assertEquals("FAILED", mockProject.status);
+                    verify(clipRepository, never()).persist(anyList());
+                });
+    }
+
+    @Test
+    @RunOnVertxContext
+    void testHandleCompletion_whenProjectNotFound_shouldThrowNotFound(UniAsserter asserter) {
+        UUID projectId = UUID.randomUUID();
+        ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", Collections.emptyList());
+
+        when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().nullItem());
+
+        asserter.assertFailedWith(() -> projectService.handleCompletion(projectId, completion),
+                throwable -> {
+                    assertTrue(throwable instanceof NotFoundException);
+                    assertEquals("Project not found", throwable.getMessage());
                 });
     }
 

@@ -6,6 +6,7 @@ import common.dto.request.SpecificationRequest;
 import common.dto.response.PagedResponse;
 import io.smallrye.mutiny.Uni;
 import io.quarkus.security.Authenticated;
+import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.BadRequestException;
@@ -16,7 +17,9 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.jwt.JsonWebToken;
+import project.dto.ProjectCompletionDTO;
 import project.dto.ProjectRequest;
 
 @Path("/project")
@@ -48,6 +51,17 @@ public class ProjectResource {
     public Uni<Project> createProject(ProjectRequest request) {
         String userId = getAuthenticatedUserId();
         return projectService.createProject(userId, request);
+    }
+
+    @POST
+    @Path("/{id}/complete")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @PermitAll
+    public Uni<Response> onProjectComplete(
+            @PathParam("id") UUID id,
+            ProjectCompletionDTO completion) {
+        return projectService.handleCompletion(id, completion)
+                .map(v -> Response.ok().build());
     }
 
     private String getAuthenticatedUserId() {

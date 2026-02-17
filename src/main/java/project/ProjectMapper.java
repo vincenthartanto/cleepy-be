@@ -10,7 +10,8 @@ public class ProjectMapper {
         Project project = new Project();
         project.title = request.title();
         project.userId = userId;
-        project.status = "processing";
+        project.status = "PROCESSING";
+        project.sourceUrl = request.sourceUrl();
         return project;
     }
 }
