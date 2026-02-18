@@ -19,11 +19,14 @@ public class VideoProcessRequest {
     public String captionStyle = "classic";
     public int splitThreshold = 2;
 
+    public String userId;
+
     public VideoProcessRequest() {
     }
 
-    public VideoProcessRequest(String projectId, String sourceUrl, String customPrompt) {
+    public VideoProcessRequest(String projectId, String userId, String sourceUrl, String customPrompt) {
         this.projectId = projectId;
+        this.userId = userId;
         this.sourceUrl = sourceUrl;
         this.customPrompt = customPrompt;
     }

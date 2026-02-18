@@ -136,9 +136,12 @@ public class ProjectServiceTest {
         mockProject.status = "PROCESSING";
 
         List<ClipDTO> clipDTOs = List.of(
-                new ClipDTO("Funny Moment", "A funny moment", "http://localhost:8000/static/clip1.mp4", 10.0, 25.0,
+                new ClipDTO(UUID.randomUUID().toString(), "Funny Moment", "A funny moment",
+                        "http://localhost:8000/static/clip1.mp4", "http://localhost:8000/static/thumb1.jpg", 10.0, 25.0,
                         95.5),
-                new ClipDTO("Epic Scene", "An epic scene", "http://localhost:8000/static/clip2.mp4", 45.0, 60.0, 88.0));
+                new ClipDTO(UUID.randomUUID().toString(), "Epic Scene", "An epic scene",
+                        "http://localhost:8000/static/clip2.mp4", "http://localhost:8000/static/thumb2.jpg", 45.0, 60.0,
+                        88.0));
 
         ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", clipDTOs);
 

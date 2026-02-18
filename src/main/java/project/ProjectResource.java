@@ -1,7 +1,9 @@
 package project;
 
+import java.util.List;
 import java.util.UUID;
 
+import clip.Clip;
 import common.dto.request.SpecificationRequest;
 import common.dto.response.PagedResponse;
 import io.smallrye.mutiny.Uni;
@@ -62,6 +64,13 @@ public class ProjectResource {
             ProjectCompletionDTO completion) {
         return projectService.handleCompletion(id, completion)
                 .map(v -> Response.ok().build());
+    }
+
+    @GET
+    @Path("/{id}/clips")
+    public Uni<List<Clip>> getProjectClips(@PathParam("id") UUID id) {
+        String userId = getAuthenticatedUserId();
+        return projectService.getProjectClips(id, userId);
     }
 
     private String getAuthenticatedUserId() {
