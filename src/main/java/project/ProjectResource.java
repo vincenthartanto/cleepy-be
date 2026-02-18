@@ -66,6 +66,14 @@ public class ProjectResource {
                 .map(v -> Response.ok().build());
     }
 
+    @POST
+    @Path("/{id}/retry")
+    public Uni<Response> retryProject(@PathParam("id") UUID id) {
+        String userId = getAuthenticatedUserId();
+        return projectService.retryProject(id, userId)
+                .map(p -> Response.ok(p).build());
+    }
+
     @GET
     @Path("/{id}/clips")
     public Uni<List<Clip>> getProjectClips(@PathParam("id") UUID id) {

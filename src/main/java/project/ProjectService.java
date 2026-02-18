@@ -81,6 +81,9 @@ public class ProjectService {
                 .onItem().ifNull().failWith(() -> new NotFoundException("Project not found"))
                 .flatMap(project -> {
                     project.status = completion.status();
+                    if (completion.thumbnailUrl() != null && !completion.thumbnailUrl().isBlank()) {
+                        project.thumbnailUrl = completion.thumbnailUrl();
+                    }
 
                     if ("COMPLETED".equals(completion.status()) && completion.clips() != null) {
                         try {
@@ -115,5 +118,42 @@ public class ProjectService {
         return projectRepository.findById(projectId)
                 .onItem().ifNotNull().invoke(p -> p.status = "FAILED")
                 .replaceWithVoid();
+    }
+
+    @WithTransaction
+    public Uni<Project> retryProject(UUID projectId, String userId) {
+        return projectRepository.findById(projectId)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Project not found"))
+                .onItem().invoke(project -> {
+                    if (!userId.equals(project.userId)) {
+                        throw new ForbiddenException("You do not have permission to retry this project");
+                    }
+                })
+                .flatMap(project -> {
+                    project.status = "PROCESSING";
+                    // Clear previous clips if any, to avoid duplicates?
+                    // Actually, pipeline creates new clip IDs, so we might end up with duplicates
+                    // or mixed sets
+                    // But if we delete them, we lose old clips if pipeline fails again.
+                    // For now, let's keep them. Pipeline overwrites if IDs match (unlikely with
+                    // UUID)
+                    // Ideally we should clear clips or pipeline handles it.
+                    // Let's rely on smart pipeline. The pipeline generates new clip IDs each run.
+                    // So we should probably delete existing clips for this project to keep it
+                    // clean.
+
+                    return clipRepository.delete("project.id", projectId)
+                            .flatMap(ignored -> {
+                                VideoProcessRequest processReq = new VideoProcessRequest(
+                                        project.id.toString(),
+                                        userId,
+                                        project.sourceUrl,
+                                        null // customPrompt not stored in project entity currently, would need to add
+                                             // it if we want to persist it
+                                );
+                                return aiClipperClient.processVideo(processReq)
+                                        .replaceWith(project);
+                            });
+                });
     }
 }

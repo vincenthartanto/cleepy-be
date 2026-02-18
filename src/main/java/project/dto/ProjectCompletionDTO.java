@@ -4,6 +4,7 @@ import java.util.List;
 
 public record ProjectCompletionDTO(
                 String status,
+                String thumbnailUrl,
                 List<ClipDTO> clips) {
 
         public record ClipDTO(
