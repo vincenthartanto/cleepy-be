@@ -42,7 +42,7 @@ public class Clip extends PanacheEntityBase {
     @Column(name = "viral_score")
     public Integer viralScore;
 
-    @Column(name = "analysis_result")
+    @Column(name = "analysis_result", columnDefinition = "TEXT")
     public String analysisResult;
 
     @CreationTimestamp

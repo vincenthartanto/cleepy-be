@@ -6,7 +6,7 @@ public class VideoProcessRequest {
     public String sourceUrl;
     public String customPrompt;
     public boolean analyze = true;
-    public int numMoments = 5;
+    public Integer numMoments = null;
     public double minDuration = 10.0;
     public double maxDuration = 60.0;
     public String modelSize = "base";

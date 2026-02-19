@@ -143,7 +143,7 @@ public class ProjectServiceTest {
                         "http://localhost:8000/static/clip2.mp4", "http://localhost:8000/static/thumb2.jpg", 45.0, 60.0,
                         88.0));
 
-        ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", clipDTOs);
+        ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", null, clipDTOs);
 
         when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
         when(clipRepository.persist(anyList())).thenReturn(Uni.createFrom().voidItem());
@@ -163,7 +163,7 @@ public class ProjectServiceTest {
         mockProject.id = projectId;
         mockProject.status = "PROCESSING";
 
-        ProjectCompletionDTO completion = new ProjectCompletionDTO("FAILED", Collections.emptyList());
+        ProjectCompletionDTO completion = new ProjectCompletionDTO("FAILED", null, Collections.emptyList());
 
         when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
 
@@ -178,7 +178,7 @@ public class ProjectServiceTest {
     @RunOnVertxContext
     void testHandleCompletion_whenProjectNotFound_shouldThrowNotFound(UniAsserter asserter) {
         UUID projectId = UUID.randomUUID();
-        ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", Collections.emptyList());
+        ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", null, Collections.emptyList());
 
         when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().nullItem());
 
