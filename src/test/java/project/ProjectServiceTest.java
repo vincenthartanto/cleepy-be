@@ -29,6 +29,8 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import project.dto.ProjectCompletionDTO;
 import project.dto.ProjectCompletionDTO.ClipDTO;
 import project.dto.ProjectRequest;
+import user.User;
+import user.UserRepository;
 
 @QuarkusTest
 public class ProjectServiceTest {
@@ -38,6 +40,9 @@ public class ProjectServiceTest {
 
     @InjectMock
     ProjectMapper projectMapper;
+
+    @InjectMock
+    UserRepository userRepository;
 
     @InjectMock
     @RestClient
@@ -64,6 +69,13 @@ public class ProjectServiceTest {
         mockProject.status = "PROCESSING";
         mockProject.sourceUrl = request.sourceUrl();
 
+        User mockUser = new User();
+        mockUser.id = userId;
+        mockUser.creditsRemaining = 5;
+        mockUser.planMode = user.PlanMode.PRO;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+        when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(mockUser));
         when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
         when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
@@ -85,23 +97,45 @@ public class ProjectServiceTest {
 
     @Test
     @RunOnVertxContext
-    void testCreateProject_whenPythonServiceFails_shouldThrowException(UniAsserter asserter) {
+    void testCreateProject_whenPythonServiceFails_shouldMarkFailedAndRefund(UniAsserter asserter) {
         String userId = "firebase-uid-789";
         ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc");
+
+        User mockUser = new User();
+        mockUser.id = userId;
+        mockUser.creditsRemaining = 5;
+        mockUser.planMode = user.PlanMode.PRO;
 
         Project mockProject = new Project();
         mockProject.id = UUID.randomUUID();
         mockProject.title = request.title();
+        mockProject.userId = userId;
+        mockProject.status = "PROCESSING";
 
+        // Setup User deduction
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+        when(userRepository.persist(any(User.class)))
+                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+
+        // Setup Project Creation
         when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
+        when(projectRepository.findById(mockProject.id)).thenReturn(Uni.createFrom().item(mockProject));
+
+        // Python Client Failure
         when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
                 .thenReturn(Uni.createFrom().failure(new RuntimeException("Python service unreachable")));
 
-        asserter.assertFailedWith(() -> projectService.createProject(userId, request),
-                throwable -> {
-                    assertTrue(throwable instanceof RuntimeException);
-                    assertEquals("Python service unreachable", throwable.getMessage());
+        asserter.assertThat(() -> projectService.createProject(userId, request),
+                project -> {
+                    assertNotNull(project);
+                    // Due to immediate catch logic, it should end with FAILED status and 5 credits
+                    // (4 + 1 refund)
+                    assertEquals("FAILED", project.status);
+                    assertEquals(5, mockUser.creditsRemaining);
+                    verify(aiClipperClient).processVideo(any(VideoProcessRequest.class));
+                    // Check persist was called twice: once for deduction, once for refund
+                    verify(userRepository, times(2)).persist(any(User.class));
                 });
     }
 
@@ -114,6 +148,13 @@ public class ProjectServiceTest {
         Project mockProject = new Project();
         mockProject.title = request.title();
 
+        User mockUser = new User();
+        mockUser.id = userId;
+        mockUser.creditsRemaining = 5;
+        mockUser.planMode = user.PlanMode.PRO;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+        when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(mockUser));
         when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
         when(projectRepository.persist(any(Project.class)))
                 .thenReturn(Uni.createFrom().failure(new RuntimeException("Database error")));
@@ -157,20 +198,34 @@ public class ProjectServiceTest {
 
     @Test
     @RunOnVertxContext
-    void testHandleCompletion_whenFailed_shouldUpdateStatusWithoutClips(UniAsserter asserter) {
+    void testHandleCompletion_whenFailed_shouldUpdateStatusAndRefundCredits(UniAsserter asserter) {
         UUID projectId = UUID.randomUUID();
+        String userId = "user123";
         Project mockProject = new Project();
         mockProject.id = projectId;
+        mockProject.userId = userId;
         mockProject.status = "PROCESSING";
+
+        User mockUser = new User();
+        mockUser.id = userId;
+        mockUser.creditsRemaining = 5;
 
         ProjectCompletionDTO completion = new ProjectCompletionDTO("FAILED", null, Collections.emptyList());
 
         when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+        when(userRepository.persist(any(User.class)))
+                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+        when(projectRepository.persist(any(Project.class)))
+                .thenAnswer(invocation -> Uni.createFrom().item((Project) invocation.getArgument(0)));
 
         asserter.assertThat(() -> projectService.handleCompletion(projectId, completion),
                 result -> {
                     assertEquals("FAILED", mockProject.status);
+                    assertEquals(6, mockUser.creditsRemaining); // Refunded
                     verify(clipRepository, never()).persist(anyList());
+                    verify(userRepository).persist(any(User.class));
+                    verify(projectRepository).persist(any(Project.class));
                 });
     }
 
@@ -328,6 +383,41 @@ public class ProjectServiceTest {
                 throwable -> {
                     assertTrue(throwable instanceof NotFoundException);
                     assertEquals("Project not found", throwable.getMessage());
+                });
+    }
+
+    // ── sweepStuckProjects tests ──
+    @Test
+    @RunOnVertxContext
+    void testSweepStuckProjects_whenStuckProjectsExist_shouldMarkFailedAndRefund(UniAsserter asserter) {
+        Project stuckProject = new Project();
+        stuckProject.id = UUID.randomUUID();
+        stuckProject.userId = "user1";
+        stuckProject.status = "PROCESSING";
+
+        User mockUser = new User();
+        mockUser.id = "user1";
+        mockUser.creditsRemaining = 1;
+
+        // Mock panache query for 24h old projects
+        io.quarkus.hibernate.reactive.panache.PanacheQuery<Project> mockQuery = mock(
+                io.quarkus.hibernate.reactive.panache.PanacheQuery.class);
+        when(projectRepository.find(eq("status = ?1 and createdAt < ?2"), any(Object[].class))).thenReturn(mockQuery);
+        when(mockQuery.list()).thenReturn(Uni.createFrom().item(List.of(stuckProject)));
+
+        when(projectRepository.findById(stuckProject.id)).thenReturn(Uni.createFrom().item(stuckProject));
+        when(userRepository.findById("user1")).thenReturn(Uni.createFrom().item(mockUser));
+        when(userRepository.persist(any(User.class)))
+                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+        when(projectRepository.persist(any(Project.class)))
+                .thenAnswer(invocation -> Uni.createFrom().item((Project) invocation.getArgument(0)));
+
+        asserter.assertThat(() -> projectService.sweepStuckProjects(),
+                result -> {
+                    assertEquals("FAILED", stuckProject.status);
+                    assertEquals(2, mockUser.creditsRemaining); // 1 + 1 refund
+                    verify(userRepository).persist(any(User.class));
+                    verify(projectRepository).persist(any(Project.class));
                 });
     }
 }

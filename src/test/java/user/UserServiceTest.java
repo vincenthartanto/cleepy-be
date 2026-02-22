@@ -177,13 +177,13 @@ public class UserServiceTest {
 
     @Test
     @RunOnVertxContext
-    void testTopUpCredits_whenUserNotPro_shouldThrowBadRequestException(UniAsserter asserter) {
+    void testTopUpCredits_whenUserFreeTrial_shouldThrowBadRequestException(UniAsserter asserter) {
         String userId = "user1";
         TopUpRequest request = new TopUpRequest(10);
 
         User mockUser = new User();
         mockUser.id = userId;
-        mockUser.planMode = PlanMode.STARTER;
+        mockUser.planMode = PlanMode.FREE_TRIAL;
         mockUser.creditsRemaining = 2;
 
         when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
@@ -191,7 +191,7 @@ public class UserServiceTest {
         asserter.assertFailedWith(() -> userService.topUpCredits(userId, request),
                 throwable -> {
                     assertTrue(throwable instanceof BadRequestException);
-                    assertEquals("Top-ups are only allowed for PRO users. Please upgrade your plan.",
+                    assertEquals("Top-ups are not allowed for FREE_TRIAL users. Please upgrade to STARTER or PRO.",
                             throwable.getMessage());
                 });
     }

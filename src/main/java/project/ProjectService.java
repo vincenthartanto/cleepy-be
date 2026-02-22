@@ -158,7 +158,7 @@ public class ProjectService {
     @WithTransaction
     public Uni<Void> markProjectFailed(UUID projectId, String reason) {
         return projectRepository.findById(projectId)
-                .onItem().ifNotNull().flatMap(project -> {
+                .onItem().ifNotNull().transformToUni(project -> {
                     if ("FAILED".equals(project.status)) {
                         // Prevent duplicate refunds if job already failed
                         return Uni.createFrom().voidItem();
@@ -224,7 +224,10 @@ public class ProjectService {
                                             user.creditsRemaining -= 1;
                                             return userRepository.persist(user);
                                         })
-                                        .flatMap(ignored -> aiClipperClient.processVideo(processReq)
+                                        .flatMap(userPersisted -> aiClipperClient.processVideo(processReq) // Changed
+                                                                                                           // 'ignored'
+                                                                                                           // to
+                                                                                                           // 'userPersisted'
                                                 .replaceWith(project)
                                                 .onFailure().recoverWithUni(t -> {
                                                     LOG.errorf(t, "Failed to reach AI Worker for project retry %s",
