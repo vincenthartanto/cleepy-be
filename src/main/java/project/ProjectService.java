@@ -71,45 +71,62 @@ public class ProjectService {
 
     @WithTransaction
     public Uni<Project> createProject(String userId, ProjectRequest request) {
-        return userRepository.findById(userId)
-                .onItem().ifNull().switchTo(() -> {
-                    User newUser = new User();
-                    newUser.id = userId;
-                    newUser.creditsRemaining = 3;
-                    newUser.planMode = PlanMode.FREE_TRIAL;
-                    return userRepository.persist(newUser);
-                })
-                .flatMap(user -> {
-                    if (user.creditsRemaining <= 0) {
-                        return Uni.createFrom().failure(new ForbiddenException(
-                                "Insufficient credits to generate project. Please upgrade to Pro or top up."));
-                    }
-                    user.creditsRemaining -= 1;
-                    return userRepository.persist(user);
-                })
-                .flatMap(user -> {
-                    Project project = projectMapper.toEntity(request, userId);
-                    project.status = "PROCESSING";
+        // 1. Calculate duration and cost upfront
+        Uni<Integer> durationUni;
+        if (request.durationSeconds() != null) {
+            durationUni = Uni.createFrom().item(request.durationSeconds());
+        } else if (request.sourceUrl() != null && !request.sourceUrl().isBlank()) {
+            durationUni = aiClipperClient.getMetadata(request.sourceUrl())
+                    .map(metadata -> metadata.duration())
+                    .onFailure().recoverWithItem(0); // fallback to 0 if yt-dlp fails
+        } else {
+            durationUni = Uni.createFrom().item(0);
+        }
 
-                    return projectRepository.persist(project)
-                            .flatMap(saved -> {
-                                VideoProcessRequest processReq = new VideoProcessRequest(
-                                        saved.id.toString(),
-                                        userId,
-                                        request.sourceUrl(),
-                                        request.customPrompt());
-                                return aiClipperClient.processVideo(processReq)
-                                        .replaceWith(saved)
-                                        .onFailure().recoverWithUni(t -> {
-                                            // 1. Immediate Network Catch: Refund user if Python server is completely
-                                            // offline
-                                            LOG.errorf(t, "Failed to reach AI Worker for project %s", saved.id);
-                                            return markProjectFailed(saved.id,
-                                                    "AI service unavailable: " + t.getMessage())
-                                                    .replaceWith(saved);
-                                        });
-                            });
-                });
+        return durationUni.flatMap(duration -> {
+            int cost = calculateCost(duration);
+
+            return userRepository.findById(userId)
+                    .onItem().ifNull().switchTo(() -> {
+                        User newUser = new User();
+                        newUser.id = userId;
+                        newUser.creditsRemaining = 3;
+                        newUser.planMode = PlanMode.FREE_TRIAL;
+                        return userRepository.persist(newUser);
+                    })
+                    .flatMap(user -> {
+                        if (user.creditsRemaining < cost) {
+                            return Uni.createFrom().failure(new ForbiddenException(
+                                    "Insufficient credits. This <b>%d-minute</b> video requires <b>%d credits</b>, but you only have <b>%d</b>. Please top up."
+                                            .formatted((duration / 60), cost, user.creditsRemaining)));
+                        }
+                        user.creditsRemaining -= cost;
+                        return userRepository.persist(user);
+                    })
+                    .flatMap(user -> {
+                        Project project = projectMapper.toEntity(request, userId);
+                        project.status = "PROCESSING";
+                        project.durationSeconds = duration;
+                        project.cost = cost;
+
+                        return projectRepository.persist(project)
+                                .flatMap(saved -> {
+                                    VideoProcessRequest processReq = new VideoProcessRequest(
+                                            saved.id.toString(),
+                                            userId,
+                                            request.sourceUrl(),
+                                            request.customPrompt());
+                                    return aiClipperClient.processVideo(processReq)
+                                            .replaceWith(saved)
+                                            .onFailure().recoverWithUni(t -> {
+                                                LOG.errorf(t, "Failed to reach AI Worker for project %s", saved.id);
+                                                return markProjectFailed(saved.id,
+                                                        "AI service unavailable: " + t.getMessage())
+                                                        .replaceWith(saved);
+                                            });
+                                });
+                    });
+        });
     }
 
     @WithTransaction
@@ -169,8 +186,10 @@ public class ProjectService {
                     return userRepository.findById(project.userId)
                             .flatMap(user -> {
                                 if (user != null) {
-                                    user.creditsRemaining += 1;
-                                    LOG.infof("Refunded 1 credit to user %s for failed project %s", user.id, projectId);
+                                    int refundAmount = project.cost > 0 ? project.cost : 1;
+                                    user.creditsRemaining += refundAmount;
+                                    LOG.infof("Refunded %d credit(s) to user %s for failed project %s", refundAmount,
+                                            user.id, projectId);
                                     return userRepository.persist(user);
                                 }
                                 return Uni.createFrom().nullItem();
@@ -267,5 +286,24 @@ public class ProjectService {
                             .collect().asList()
                             .replaceWithVoid();
                 });
+    }
+
+    public Uni<Integer> estimateCost(String url) {
+        if (url == null || url.isBlank()) {
+            return Uni.createFrom().item(1);
+        }
+        return aiClipperClient.getMetadata(url)
+                .map(metadata -> calculateCost(metadata.duration()))
+                .onFailure().recoverWithItem(1); // fallback to 1 credit if yt-dlp fails
+    }
+
+    public int calculateCost(Integer durationSeconds) {
+        if (durationSeconds == null || durationSeconds <= 0) {
+            return 1; // Minimum 1 credit fallback
+        }
+        // Formula: 1 Credit per 2 Minutes (120 seconds). Rounded up.
+        int minutes = (int) Math.ceil(durationSeconds / 60.0);
+        int cost = (int) Math.ceil(minutes / 2.0);
+        return Math.max(1, cost); // At least 1 credit
     }
 }

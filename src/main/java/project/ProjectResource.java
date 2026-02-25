@@ -75,6 +75,13 @@ public class ProjectResource {
     }
 
     @GET
+    @Path("/estimate-cost")
+    public Uni<Response> estimateCost(@jakarta.ws.rs.QueryParam("url") String url) {
+        return projectService.estimateCost(url)
+                .map(cost -> Response.ok("{\"cost\": " + cost + "}").build());
+    }
+
+    @GET
     @Path("/{id}/clips")
     public Uni<List<Clip>> getProjectClips(@PathParam("id") UUID id) {
         String userId = getAuthenticatedUserId();

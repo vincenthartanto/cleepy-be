@@ -1,0 +1,3 @@
+ALTER TABLE projects ADD COLUMN cost INTEGER DEFAULT 1;
+
+ALTER TABLE projects ADD COLUMN duration_seconds INTEGER;

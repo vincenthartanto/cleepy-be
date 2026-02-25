@@ -34,6 +34,12 @@ public class Project extends PanacheEntityBase {
     @Column(name = "source_url")
     public String sourceUrl;
 
+    @Column(name = "cost", columnDefinition = "integer default 1")
+    public int cost;
+
+    @Column(name = "duration_seconds")
+    public Integer durationSeconds;
+
     @CreationTimestamp
     @Column(name = "created_at")
     public LocalDateTime createdAt;
