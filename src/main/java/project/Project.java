@@ -40,6 +40,9 @@ public class Project extends PanacheEntityBase {
     @Column(name = "duration_seconds")
     public Integer durationSeconds;
 
+    @org.hibernate.annotations.Formula("(SELECT count(c.id) FROM clips c WHERE c.project_id = id)")
+    public Integer clipsCount;
+
     @CreationTimestamp
     @Column(name = "created_at")
     public LocalDateTime createdAt;
