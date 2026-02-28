@@ -10,12 +10,14 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.SecurityContext;
+import io.quarkus.security.Authenticated;
 import user.dto.TopUpRequest;
 import user.dto.UpgradeRequest;
 
 @Path("/users")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Authenticated
 public class UserResource {
 
     @Inject
