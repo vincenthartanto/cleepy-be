@@ -28,6 +28,15 @@ public class Project extends PanacheEntityBase {
     @Column(name = "thumbnail_url")
     public String thumbnailUrl;
 
+    @Column(name = "thumbnail_storage_uri")
+    public String thumbnailStorageUri;
+
+    @Column(name = "thumbnail_bucket")
+    public String thumbnailBucket;
+
+    @Column(name = "thumbnail_object_path")
+    public String thumbnailObjectPath;
+
     @Column(name = "user_id")
     public String userId;
 

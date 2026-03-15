@@ -47,6 +47,9 @@ public class ProjectService {
     @Inject
     UserRepository userRepository;
 
+    @Inject
+    StorageService storageService;
+
     public Uni<PagedResponse<Project>> getProjects(SpecificationRequest request, String userId) {
         return projectRepository.findByTitleLike(request, userId)
                 .flatMap(projects -> projectRepository.countByTitleLike(request, userId)
@@ -61,12 +64,34 @@ public class ProjectService {
                     if (!userId.equals(project.userId)) {
                         throw new ForbiddenException("You do not have permission to view this project");
                     }
+                    if (project.thumbnailBucket != null && project.thumbnailObjectPath != null) {
+                        String signedUrl = storageService.generateSignedUrl(project.thumbnailBucket, project.thumbnailObjectPath);
+                        if (signedUrl != null) {
+                            project.thumbnailUrl = signedUrl;
+                        }
+                    }
                 });
     }
 
     public Uni<List<Clip>> getProjectClips(UUID projectId, String userId) {
         return getProjectById(projectId, userId)
-                .flatMap(project -> clipRepository.list("project.id", projectId));
+                .flatMap(project -> clipRepository.list("project.id", projectId))
+                .onItem().invoke(clips -> {
+                    for (Clip clip : clips) {
+                        if (clip.videoBucket != null && clip.videoObjectPath != null) {
+                            String signedUrl = storageService.generateSignedUrl(clip.videoBucket, clip.videoObjectPath);
+                            if (signedUrl != null) {
+                                clip.videoUrl = signedUrl;
+                            }
+                        }
+                        if (clip.thumbnailBucket != null && clip.thumbnailObjectPath != null) {
+                            String signedUrl = storageService.generateSignedUrl(clip.thumbnailBucket, clip.thumbnailObjectPath);
+                            if (signedUrl != null) {
+                                clip.thumbnailUrl = signedUrl;
+                            }
+                        }
+                    }
+                });
     }
 
     @WithTransaction
@@ -143,6 +168,15 @@ public class ProjectService {
                     if (completion.thumbnailUrl() != null && !completion.thumbnailUrl().isBlank()) {
                         project.thumbnailUrl = completion.thumbnailUrl();
                     }
+                    if (completion.thumbnailStorageUri() != null && !completion.thumbnailStorageUri().isBlank()) {
+                        project.thumbnailStorageUri = completion.thumbnailStorageUri();
+                    }
+                    if (completion.thumbnailBucket() != null && !completion.thumbnailBucket().isBlank()) {
+                        project.thumbnailBucket = completion.thumbnailBucket();
+                    }
+                    if (completion.thumbnailObjectPath() != null && !completion.thumbnailObjectPath().isBlank()) {
+                        project.thumbnailObjectPath = completion.thumbnailObjectPath();
+                    }
 
                     if ("COMPLETED".equals(completion.status()) && completion.clips() != null) {
                         try {
@@ -153,10 +187,20 @@ public class ProjectService {
                                 clip.description = dto.description();
                                 clip.videoUrl = dto.videoUrl();
                                 clip.thumbnailUrl = dto.thumbnailUrl();
+                                clip.storageProvider = "gcs";
+                                clip.videoStorageUri = dto.videoStorageUri();
+                                clip.videoBucket = dto.videoBucket();
+                                clip.videoObjectPath = dto.videoObjectPath();
+                                clip.thumbnailStorageUri = dto.thumbnailStorageUri();
+                                clip.thumbnailBucket = dto.thumbnailBucket();
+                                clip.thumbnailObjectPath = dto.thumbnailObjectPath();
                                 clip.viralScore = (int) dto.viralityScore();
                                 clip.startTime = java.time.LocalTime.ofSecondOfDay((long) dto.startTime());
                                 clip.endTime = java.time.LocalTime.ofSecondOfDay((long) dto.endTime());
                                 clip.project = project;
+                                if (clip.videoStorageUri == null && clip.thumbnailStorageUri == null) {
+                                    clip.storageProvider = null;
+                                }
                                 return clip;
                             }).toList();
 
