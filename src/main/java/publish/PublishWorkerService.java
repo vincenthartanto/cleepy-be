@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 import io.quarkus.arc.All;
+import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.scheduler.Scheduled;
 import io.quarkus.scheduler.Scheduled.ConcurrentExecution;
 import io.smallrye.mutiny.Multi;
@@ -29,6 +30,7 @@ public class PublishWorkerService {
     @All
     List<PublisherAdapter> adapters;
 
+    @WithSession
     @Scheduled(every = "15s", concurrentExecution = ConcurrentExecution.SKIP)
     public Uni<Void> dispatchQueuedJobs() {
         return publishJobRepository.findRunnableJobs(4)
@@ -38,6 +40,7 @@ public class PublishWorkerService {
                         .replaceWithVoid());
     }
 
+    @WithSession
     @Scheduled(every = "30s", concurrentExecution = ConcurrentExecution.SKIP)
     public Uni<Void> refreshProcessingJobs() {
         return publishJobRepository.findProcessingJobs(8)

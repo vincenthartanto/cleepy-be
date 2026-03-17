@@ -21,10 +21,9 @@ public class PublishJobRepository implements PanacheRepositoryBase<PublishJob, U
     }
 
     public Uni<List<PublishJob>> findRunnableJobs(int limit) {
-        return find("(status = ?1 or (status = ?2 and nextAttemptAt <= ?4)) order by createdAt asc",
+        return find("(status = ?1 or (status = ?2 and nextAttemptAt <= ?3)) order by createdAt asc",
                 PublishJobStatus.QUEUED.name(),
                 PublishJobStatus.FAILED.name(),
-                PublishJobStatus.PROCESSING.name(),
                 LocalDateTime.now())
                 .page(Page.ofSize(limit))
                 .list();
