@@ -1,6 +1,7 @@
 package project;
 
 import com.google.auth.oauth2.GoogleCredentials;
+import com.google.cloud.storage.Blob;
 import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.HttpMethod;
 import com.google.cloud.storage.Storage;
@@ -61,5 +62,20 @@ public class StorageService {
             LOG.errorf("Failed to generate signed URL for bucket %s and object %s: %s", bucketName, objectName, e.getMessage());
             return null;
         }
+    }
+
+    public StoredObject readObject(String bucketName, String objectName) {
+        if (storage == null) {
+            throw new IllegalStateException("Storage is not initialized.");
+        }
+        Blob blob = storage.get(bucketName, objectName);
+        if (blob == null || !blob.exists()) {
+            throw new IllegalArgumentException("Storage object not found: " + bucketName + "/" + objectName);
+        }
+        String contentType = blob.getContentType() != null ? blob.getContentType() : "video/mp4";
+        return new StoredObject(blob.getContent(), contentType);
+    }
+
+    public record StoredObject(byte[] bytes, String contentType) {
     }
 }
