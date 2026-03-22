@@ -3,6 +3,11 @@ package project.dto;
 public record ProjectRequest(
         String title,
         String customPrompt,
-        String sourceUrl,
-        Integer durationSeconds) {
+        Integer durationSeconds,
+        String sourceStorageUri,
+        String sourceBucket,
+        String sourceObjectPath,
+        String sourceFileName,
+        String sourceContentType,
+        Long sourceSizeBytes) {
 }

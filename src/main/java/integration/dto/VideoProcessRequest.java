@@ -5,6 +5,12 @@ public class VideoProcessRequest {
     public String projectId;
     public String sourceUrl;
     public String customPrompt;
+    public String sourceStorageUri;
+    public String sourceBucket;
+    public String sourceObjectPath;
+    public String sourceFileName;
+    public String sourceContentType;
+    public Long sourceSizeBytes;
     public boolean analyze = true;
     public Integer numMoments = null;
     public double minDuration = 10.0;
@@ -24,10 +30,24 @@ public class VideoProcessRequest {
     public VideoProcessRequest() {
     }
 
-    public VideoProcessRequest(String projectId, String userId, String sourceUrl, String customPrompt) {
+    public VideoProcessRequest(
+            String projectId,
+            String userId,
+            String customPrompt,
+            String sourceStorageUri,
+            String sourceBucket,
+            String sourceObjectPath,
+            String sourceFileName,
+            String sourceContentType,
+            Long sourceSizeBytes) {
         this.projectId = projectId;
         this.userId = userId;
-        this.sourceUrl = sourceUrl;
         this.customPrompt = customPrompt;
+        this.sourceStorageUri = sourceStorageUri;
+        this.sourceBucket = sourceBucket;
+        this.sourceObjectPath = sourceObjectPath;
+        this.sourceFileName = sourceFileName;
+        this.sourceContentType = sourceContentType;
+        this.sourceSizeBytes = sourceSizeBytes;
     }
 }

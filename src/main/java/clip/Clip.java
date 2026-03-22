@@ -1,21 +1,19 @@
 package clip;
 
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.UUID;
-
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
-
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.Column;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.UUID;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 import project.Project;
 
 @Entity
@@ -24,6 +22,7 @@ public class Clip extends PanacheEntityBase {
 
     @Id
     public UUID id;
+
     public String title;
     public String description;
 
@@ -77,5 +76,4 @@ public class Clip extends PanacheEntityBase {
     @ManyToOne
     @JoinColumn(name = "project_id", referencedColumnName = "id")
     public Project project;
-
 }

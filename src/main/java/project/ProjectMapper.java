@@ -11,7 +11,13 @@ public class ProjectMapper {
         project.title = request.title();
         project.userId = userId;
         project.status = "PROCESSING";
-        project.sourceUrl = request.sourceUrl();
+        project.customPrompt = request.customPrompt();
+        project.sourceStorageUri = request.sourceStorageUri();
+        project.sourceBucket = request.sourceBucket();
+        project.sourceObjectPath = request.sourceObjectPath();
+        project.sourceFileName = request.sourceFileName();
+        project.sourceContentType = request.sourceContentType();
+        project.sourceSizeBytes = request.sourceSizeBytes();
         return project;
     }
 }

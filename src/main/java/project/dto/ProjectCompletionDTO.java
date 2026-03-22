@@ -4,11 +4,15 @@ import java.util.List;
 
 public record ProjectCompletionDTO(
                 String status,
+                String error,
+                String failedStage,
+                Boolean retryable,
                 String thumbnailUrl,
                 String thumbnailStorageUri,
                 String thumbnailBucket,
                 String thumbnailObjectPath,
-                List<ClipDTO> clips) {
+                List<ClipDTO> clips,
+                Integer actualDuration) {
 
         public record ClipDTO(
                         String id,

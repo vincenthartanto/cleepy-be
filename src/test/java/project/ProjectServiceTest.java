@@ -2,14 +2,18 @@ package project;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import clip.Clip;
 import clip.ClipRepository;
@@ -30,6 +34,9 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import project.dto.ProjectCompletionDTO;
 import project.dto.ProjectCompletionDTO.ClipDTO;
 import project.dto.ProjectRequest;
+import project.dto.ProjectUploadRequest;
+import org.jboss.resteasy.reactive.multipart.FileUpload;
+import project.StorageService;
 import user.User;
 import user.UserRepository;
 
@@ -55,33 +62,105 @@ public class ProjectServiceTest {
         @Inject
         ProjectService projectService;
 
+        @InjectMock
+        StorageService storageService;
+
+        @Test
+        @RunOnVertxContext
+        void testGetProjectById_whenProjectHasStoredMedia_shouldExposeRelativeMediaUrls(UniAsserter asserter) {
+                String userId = "firebase-uid-media";
+                UUID projectId = UUID.randomUUID();
+
+                Project project = new Project();
+                project.id = projectId;
+                project.userId = userId;
+                project.thumbnailBucket = "test-bucket";
+                project.thumbnailObjectPath = "output/user/project-thumb.jpg";
+                project.sourceBucket = "test-bucket";
+                project.sourceObjectPath = "pending/user/source.mp4";
+
+                projectService.mediaBasePath = "/api/";
+                when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(project));
+
+                asserter.assertThat(() -> projectService.getProjectById(projectId, userId),
+                                loadedProject -> {
+                                        assertEquals("/api/project/" + projectId + "/media/thumbnail",
+                                                        loadedProject.thumbnailUrl);
+                                        assertEquals("/api/project/" + projectId + "/media/source",
+                                                        loadedProject.sourceUrl);
+                                        assertFalse(loadedProject.thumbnailUrl.startsWith("http://localhost"));
+                                        assertFalse(loadedProject.sourceUrl.startsWith("http://localhost"));
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
+        void testGetProjectClips_whenClipsHaveStoredMedia_shouldExposeRelativeMediaUrls(UniAsserter asserter) {
+                String userId = "firebase-uid-clips";
+                UUID projectId = UUID.randomUUID();
+                UUID clipId = UUID.randomUUID();
+
+                Project project = new Project();
+                project.id = projectId;
+                project.userId = userId;
+
+                Clip clip = new Clip();
+                clip.id = clipId;
+                clip.videoBucket = "test-bucket";
+                clip.videoObjectPath = "output/user/project/clip.mp4";
+                clip.thumbnailBucket = "test-bucket";
+                clip.thumbnailObjectPath = "output/user/project/clip.jpg";
+
+                projectService.mediaBasePath = "api";
+                when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(project));
+                when(clipRepository.list("project.id", projectId)).thenReturn(Uni.createFrom().item(List.of(clip)));
+
+                asserter.assertThat(() -> projectService.getProjectClips(projectId, userId),
+                                loadedClips -> {
+                                        assertEquals(1, loadedClips.size());
+                                        Clip loadedClip = loadedClips.get(0);
+                                        assertEquals(
+                                                        "/api/project/" + projectId + "/clips/" + clipId + "/media/video",
+                                                        loadedClip.videoUrl);
+                                        assertEquals(
+                                                        "/api/project/" + projectId + "/clips/" + clipId
+                                                                        + "/media/thumbnail",
+                                                        loadedClip.thumbnailUrl);
+                                        assertFalse(loadedClip.videoUrl.startsWith("http://localhost"));
+                                        assertFalse(loadedClip.thumbnailUrl.startsWith("http://localhost"));
+                                });
+        }
+
         // ── createProject tests ──
 
         @Test
         @RunOnVertxContext
         void testCreateProject_whenValidRequest_shouldReturnPersistedProject(UniAsserter asserter) {
                 String userId = "firebase-uid-123";
-                ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc",
-                                null);
+                String bucket = "test-bucket";
+                String objectPath = "pending/" + userId + "/upload-id/video.mp4";
+                ProjectRequest request = new ProjectRequest("Test Project", null, null,
+                                "gs://" + bucket + "/" + objectPath, bucket, objectPath, "video.mp4", "video/mp4", 1024L);
 
                 Project mockProject = new Project();
                 mockProject.id = UUID.randomUUID();
                 mockProject.title = request.title();
                 mockProject.userId = userId;
                 mockProject.status = "PROCESSING";
-                mockProject.sourceUrl = request.sourceUrl();
+                mockProject.sourceUrl = "https://youtube.com/watch?v=abc";
 
                 User mockUser = new User();
                 mockUser.id = userId;
                 mockUser.creditsRemaining = 5;
                 mockUser.planMode = user.PlanMode.PRO;
 
+                when(storageService.defaultBucketName()).thenReturn(bucket);
+                when(storageService.getObjectMetadata(bucket, objectPath))
+                                .thenReturn(new StorageService.StoredObjectMetadata(bucket, objectPath, 1024L, "video/mp4"));
                 when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
                 when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(mockUser));
                 when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
                 when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
-                when(aiClipperClient.getMetadata(anyString()))
-                                .thenReturn(Uni.createFrom().item(new VideoMetadataDTO(120))); // 2 minutes = 1 credit
                 when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
                                 .thenReturn(Uni.createFrom()
                                                 .item(new VideoProcessResponse("Processing started",
@@ -93,7 +172,7 @@ public class ProjectServiceTest {
                                         assertEquals("Test Project", project.title);
                                         assertEquals(userId, project.userId);
                                         assertEquals("PROCESSING", project.status);
-                                        assertEquals("https://youtube.com/watch?v=abc", project.sourceUrl);
+                                        assertNotNull(project.sourceUrl);
                                         verify(projectMapper).toEntity(eq(request), eq(userId));
                                         verify(projectRepository).persist(any(Project.class));
                                         verify(aiClipperClient).processVideo(any(VideoProcessRequest.class));
@@ -104,8 +183,10 @@ public class ProjectServiceTest {
         @RunOnVertxContext
         void testCreateProject_whenPythonServiceFails_shouldMarkFailedAndRefund(UniAsserter asserter) {
                 String userId = "firebase-uid-789";
-                ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc",
-                                null);
+                String bucket = "test-bucket";
+                String objectPath = "pending/" + userId + "/upload-id/video.mp4";
+                ProjectRequest request = new ProjectRequest("Test Project", null, null,
+                                "gs://" + bucket + "/" + objectPath, bucket, objectPath, "video.mp4", "video/mp4", 1024L);
 
                 User mockUser = new User();
                 mockUser.id = userId;
@@ -118,6 +199,11 @@ public class ProjectServiceTest {
                 mockProject.userId = userId;
                 mockProject.status = "PROCESSING";
 
+                // Setup Storage
+                when(storageService.defaultBucketName()).thenReturn(bucket);
+                when(storageService.getObjectMetadata(bucket, objectPath))
+                                .thenReturn(new StorageService.StoredObjectMetadata(bucket, objectPath, 1024L, "video/mp4"));
+
                 // Setup User deduction
                 when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
                 when(userRepository.persist(any(User.class)))
@@ -127,8 +213,6 @@ public class ProjectServiceTest {
                 when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
                 when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
                 when(projectRepository.findById(mockProject.id)).thenReturn(Uni.createFrom().item(mockProject));
-                when(aiClipperClient.getMetadata(anyString()))
-                                .thenReturn(Uni.createFrom().item(new VideoMetadataDTO(120))); // 2 minutes = 1 credit
 
                 // Python Client Failure
                 when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
@@ -152,8 +236,10 @@ public class ProjectServiceTest {
         @RunOnVertxContext
         void testCreateProject_whenPersistFails_shouldThrowRuntimeException(UniAsserter asserter) {
                 String userId = "firebase-uid-789";
-                ProjectRequest request = new ProjectRequest("Test Project", null, "https://youtube.com/watch?v=abc",
-                                null);
+                String bucket = "test-bucket";
+                String objectPath = "pending/" + userId + "/upload-id/video.mp4";
+                ProjectRequest request = new ProjectRequest("Test Project", null, null,
+                                "gs://" + bucket + "/" + objectPath, bucket, objectPath, "video.mp4", "video/mp4", 1024L);
 
                 Project mockProject = new Project();
                 mockProject.title = request.title();
@@ -163,11 +249,12 @@ public class ProjectServiceTest {
                 mockUser.creditsRemaining = 5;
                 mockUser.planMode = user.PlanMode.PRO;
 
+                when(storageService.defaultBucketName()).thenReturn(bucket);
+                when(storageService.getObjectMetadata(bucket, objectPath))
+                                .thenReturn(new StorageService.StoredObjectMetadata(bucket, objectPath, 1024L, "video/mp4"));
                 when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
                 when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(mockUser));
                 when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
-                when(aiClipperClient.getMetadata(anyString()))
-                                .thenReturn(Uni.createFrom().item(new VideoMetadataDTO(120))); // 2 minutes = 1 credit
 
                 when(projectRepository.persist(any(Project.class)))
                                 .thenReturn(Uni.createFrom().failure(new RuntimeException("Database error")));
@@ -176,6 +263,172 @@ public class ProjectServiceTest {
                                 throwable -> {
                                         assertTrue(throwable instanceof RuntimeException);
                                         assertEquals("Database error", throwable.getMessage());
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
+        void testCreateProject_whenMetadataLookupFails_shouldStillCreateProject(UniAsserter asserter) {
+                String userId = "firebase-uid-456";
+                String bucket = "test-bucket";
+                String objectPath = "pending/" + userId + "/upload-id/video.mp4";
+                ProjectRequest request = new ProjectRequest("Test Project", null, null,
+                                "gs://" + bucket + "/" + objectPath, bucket, objectPath, "video.mp4", "video/mp4", 1024L);
+
+                Project mockProject = new Project();
+                mockProject.id = UUID.randomUUID();
+                mockProject.title = request.title();
+                mockProject.userId = userId;
+                mockProject.status = "PROCESSING";
+                mockProject.sourceUrl = "https://youtube.com/watch?v=abc";
+
+                User mockUser = new User();
+                mockUser.id = userId;
+                mockUser.creditsRemaining = 5;
+                mockUser.planMode = user.PlanMode.PRO;
+
+                when(storageService.defaultBucketName()).thenReturn(bucket);
+                when(storageService.getObjectMetadata(bucket, objectPath))
+                                .thenReturn(new StorageService.StoredObjectMetadata(bucket, objectPath, 1024L, "video/mp4"));
+                when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+                when(userRepository.persist(any(User.class)))
+                                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+                when(projectMapper.toEntity(eq(request), eq(userId))).thenReturn(mockProject);
+                when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
+                when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
+                                .thenReturn(Uni.createFrom()
+                                                .item(new VideoProcessResponse("Processing started",
+                                                                mockProject.id.toString())));
+
+                asserter.assertThat(() -> projectService.createProject(userId, request),
+                                project -> {
+                                        assertNotNull(project);
+                                        assertEquals(0, project.durationSeconds);
+                                        assertEquals(4, mockUser.creditsRemaining);
+                                        verify(aiClipperClient).processVideo(any(VideoProcessRequest.class));
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
+        void testCreateProjectFromUpload_whenValidRequest_shouldUploadViaBackendAndDispatchWorker(UniAsserter asserter)
+                        throws Exception {
+                String userId = "firebase-uid-upload";
+                String bucket = "test-bucket";
+                Path uploadedFile = Files.createTempFile("project-upload-", ".mp4");
+                Files.write(uploadedFile, new byte[] { 1, 2, 3, 4 });
+
+                FileUpload fileUpload = mock(FileUpload.class);
+                when(fileUpload.fileName()).thenReturn("my video.mp4");
+                when(fileUpload.filePath()).thenReturn(uploadedFile);
+                when(fileUpload.contentType()).thenReturn("video/mp4");
+                when(fileUpload.size()).thenReturn(4L);
+
+                ProjectUploadRequest request = new ProjectUploadRequest();
+                request.title = "Backend Upload Project";
+                request.customPrompt = "find the best hooks";
+                request.durationSeconds = "120";
+                request.file = fileUpload;
+
+                Project mockProject = new Project();
+                mockProject.id = UUID.randomUUID();
+                mockProject.title = request.title;
+                mockProject.userId = userId;
+                mockProject.status = "PROCESSING";
+
+                User mockUser = new User();
+                mockUser.id = userId;
+                mockUser.creditsRemaining = 5;
+                mockUser.planMode = user.PlanMode.PRO;
+
+                when(storageService.storeObject(anyString(), eq("video/mp4"), any()))
+                                .thenAnswer(invocation -> new StorageService.StoredObjectMetadata(
+                                                bucket,
+                                                invocation.getArgument(0, String.class),
+                                                4L,
+                                                "video/mp4"));
+                when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+                when(userRepository.persist(any(User.class)))
+                                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+                when(projectMapper.toEntity(any(ProjectRequest.class), eq(userId))).thenReturn(mockProject);
+                when(projectRepository.persist(any(Project.class))).thenReturn(Uni.createFrom().item(mockProject));
+                when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
+                                .thenReturn(Uni.createFrom()
+                                                .item(new VideoProcessResponse("Processing started",
+                                                                mockProject.id.toString())));
+
+                asserter.assertThat(() -> projectService.createProjectFromUpload(userId, request),
+                                project -> {
+                                        assertNotNull(project);
+                                        assertEquals("Backend Upload Project", project.title);
+                                        assertEquals("PROCESSING", project.status);
+
+                                        ArgumentCaptor<String> objectPathCaptor = ArgumentCaptor.forClass(String.class);
+                                        verify(storageService).storeObject(objectPathCaptor.capture(), eq("video/mp4"), any());
+                                        assertTrue(objectPathCaptor.getValue().startsWith("pending/" + userId + "/"));
+                                        assertTrue(objectPathCaptor.getValue().endsWith("/my_video.mp4"));
+
+                                        ArgumentCaptor<ProjectRequest> requestCaptor = ArgumentCaptor
+                                                        .forClass(ProjectRequest.class);
+                                        verify(projectMapper).toEntity(requestCaptor.capture(), eq(userId));
+                                        ProjectRequest persistedRequest = requestCaptor.getValue();
+                                        assertEquals("Backend Upload Project", persistedRequest.title());
+                                        assertEquals("find the best hooks", persistedRequest.customPrompt());
+                                        assertEquals(120, persistedRequest.durationSeconds());
+                                        assertEquals("my video.mp4", persistedRequest.sourceFileName());
+                                        assertEquals("video/mp4", persistedRequest.sourceContentType());
+                                        assertEquals(4L, persistedRequest.sourceSizeBytes());
+                                        assertEquals(bucket, persistedRequest.sourceBucket());
+                                        assertEquals(objectPathCaptor.getValue(), persistedRequest.sourceObjectPath());
+                                        assertEquals(
+                                                        "gs://" + bucket + "/" + objectPathCaptor.getValue(),
+                                                        persistedRequest.sourceStorageUri());
+
+                                        verify(aiClipperClient).processVideo(any(VideoProcessRequest.class));
+                                        verify(storageService, never()).deleteObject(anyString(), anyString());
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
+        void testCreateProjectFromUpload_whenCreationFails_shouldDeleteUploadedObject(UniAsserter asserter)
+                        throws Exception {
+                String userId = "firebase-uid-upload-fail";
+                String bucket = "test-bucket";
+                Path uploadedFile = Files.createTempFile("project-upload-fail-", ".mp4");
+                Files.write(uploadedFile, new byte[] { 9, 8, 7, 6 });
+
+                FileUpload fileUpload = mock(FileUpload.class);
+                when(fileUpload.fileName()).thenReturn("cleanup.mp4");
+                when(fileUpload.filePath()).thenReturn(uploadedFile);
+                when(fileUpload.contentType()).thenReturn("video/mp4");
+                when(fileUpload.size()).thenReturn(4L);
+
+                ProjectUploadRequest request = new ProjectUploadRequest();
+                request.title = "Should Fail";
+                request.durationSeconds = "30";
+                request.file = fileUpload;
+
+                User mockUser = new User();
+                mockUser.id = userId;
+                mockUser.creditsRemaining = 0;
+                mockUser.planMode = user.PlanMode.PRO;
+
+                when(storageService.storeObject(anyString(), eq("video/mp4"), any()))
+                                .thenAnswer(invocation -> new StorageService.StoredObjectMetadata(
+                                                bucket,
+                                                invocation.getArgument(0, String.class),
+                                                4L,
+                                                "video/mp4"));
+                when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+
+                asserter.assertFailedWith(() -> projectService.createProjectFromUpload(userId, request),
+                                throwable -> {
+                                        assertTrue(throwable instanceof ForbiddenException);
+                                        verify(storageService).deleteObject(eq(bucket),
+                                                        argThat(path -> path.startsWith("pending/" + userId + "/")));
+                                        verify(projectRepository, never()).persist(any(Project.class));
+                                        verify(aiClipperClient, never()).processVideo(any(VideoProcessRequest.class));
                                 });
         }
 
@@ -203,7 +456,8 @@ public class ProjectServiceTest {
                                                 45.0, 60.0,
                                                 88.0));
 
-                ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", null, null, null, null, clipDTOs);
+                ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", null, null, null,
+                                null, null, null, null, clipDTOs, null);
 
                 when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
                 when(clipRepository.persist(anyList())).thenReturn(Uni.createFrom().voidItem());
@@ -230,7 +484,8 @@ public class ProjectServiceTest {
                 mockUser.id = userId;
                 mockUser.creditsRemaining = 5;
 
-                ProjectCompletionDTO completion = new ProjectCompletionDTO("FAILED", null, null, null, null, Collections.emptyList());
+                ProjectCompletionDTO completion = new ProjectCompletionDTO("FAILED", null, null, null,
+                                null, null, null, null, Collections.emptyList(), null);
 
                 when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
                 when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
@@ -253,7 +508,8 @@ public class ProjectServiceTest {
         @RunOnVertxContext
         void testHandleCompletion_whenProjectNotFound_shouldThrowNotFound(UniAsserter asserter) {
                 UUID projectId = UUID.randomUUID();
-                ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", null, null, null, null, Collections.emptyList());
+                ProjectCompletionDTO completion = new ProjectCompletionDTO("COMPLETED", null, null, null,
+                                null, null, null, null, Collections.emptyList(), null);
 
                 when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().nullItem());
 

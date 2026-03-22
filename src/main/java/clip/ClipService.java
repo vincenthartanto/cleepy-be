@@ -29,7 +29,13 @@ public class ClipService {
     
     @WithTransaction
     public Uni<Clip> createClip(ClipRequest request) {
-        return projectRepository.findById(UUID.fromString(request.projectId()))
+        UUID projectId;
+        try {
+            projectId = UUID.fromString(request.projectId());
+        } catch (IllegalArgumentException e) {
+            return Uni.createFrom().failure(e);
+        }
+        return projectRepository.findById(projectId)
             .chain(project -> {
                 if (project == null) {
                     return Uni.createFrom().failure(new IllegalArgumentException("Project not found"));
