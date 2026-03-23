@@ -15,7 +15,7 @@ public class VideoProcessRequest {
     public Integer numMoments = null;
     public double minDuration = 10.0;
     public double maxDuration = 60.0;
-    public String modelSize = "base";
+    public String modelSize = "large-v3";
     public String language;
     public Integer minSpeakers;
     public Integer maxSpeakers;

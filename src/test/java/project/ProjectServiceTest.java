@@ -384,7 +384,12 @@ public class ProjectServiceTest {
                                                         "gs://" + bucket + "/" + objectPathCaptor.getValue(),
                                                         persistedRequest.sourceStorageUri());
 
-                                        verify(aiClipperClient).processVideo(any(VideoProcessRequest.class));
+                                        ArgumentCaptor<VideoProcessRequest> processRequestCaptor = ArgumentCaptor
+                                                        .forClass(VideoProcessRequest.class);
+                                        verify(aiClipperClient).processVideo(processRequestCaptor.capture());
+                                        VideoProcessRequest dispatchedRequest = processRequestCaptor.getValue();
+                                        assertEquals("large-v3", dispatchedRequest.modelSize);
+                                        assertNull(dispatchedRequest.language);
                                         verify(storageService, never()).deleteObject(anyString(), anyString());
                                 });
         }

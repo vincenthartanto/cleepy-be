@@ -16,13 +16,13 @@ import common.dto.response.PagedResponse;
 import integration.AiClipperClient;
 import integration.dto.VideoProcessRequest;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
-import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.vertx.VertxContextSupport;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.quarkus.scheduler.Scheduled;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
@@ -69,6 +69,9 @@ public class ProjectService {
 
     @Inject
     StorageService storageService;
+
+    @Inject
+    Instance<ProjectService> self;
 
     @ConfigProperty(name = "project.media.base-path", defaultValue = "/api")
     String mediaBasePath;
@@ -129,29 +132,16 @@ public class ProjectService {
         Integer durationSeconds = parseDurationSeconds(request.durationSeconds);
 
         return VertxContextSupport.executeBlocking(() -> uploadSourceToStorage(userId, request.file))
-                .flatMap(source -> {
-                    ProjectRequest storedSourceRequest = new ProjectRequest(
-                            request.title.trim(),
-                            normalizeOptionalText(request.customPrompt),
-                            durationSeconds,
-                            buildStorageUri(source.bucketName(), source.objectName()),
-                            source.bucketName(),
-                            source.objectName(),
-                            request.file.fileName(),
-                            source.contentType(),
-                            source.sizeBytes());
-
-                    return Panache.withTransaction(() -> createProjectFromStoredSource(userId, storedSourceRequest, source))
-                            .onFailure().invoke(throwable -> {
-                                LOG.warnf(
-                                        throwable,
-                                        "Project creation failed after backend upload for user %s. Cleaning up %s/%s",
-                                        userId,
-                                        source.bucketName(),
-                                        source.objectName());
-                                storageService.deleteObject(source.bucketName(), source.objectName());
-                            });
-                });
+                .flatMap(source -> self.get().createProjectFromUploadedSource(userId, request, durationSeconds, source)
+                        .onFailure().invoke(throwable -> {
+                            LOG.warnf(
+                                    throwable,
+                                    "Project creation failed after backend upload for user %s. Cleaning up %s/%s",
+                                    userId,
+                                    source.bucketName(),
+                                    source.objectName());
+                            storageService.deleteObject(source.bucketName(), source.objectName());
+                        }));
     }
 
     @WithTransaction
@@ -401,6 +391,26 @@ public class ProjectService {
 
     private Uni<Void> dispatchProcessing(Project project) {
         return aiClipperClient.processVideo(buildProcessRequest(project)).replaceWithVoid();
+    }
+
+    @WithTransaction
+    Uni<Project> createProjectFromUploadedSource(
+            String userId,
+            ProjectUploadRequest uploadRequest,
+            Integer durationSeconds,
+            StorageService.StoredObjectMetadata source) {
+        ProjectRequest storedSourceRequest = new ProjectRequest(
+                uploadRequest.title.trim(),
+                normalizeOptionalText(uploadRequest.customPrompt),
+                durationSeconds,
+                buildStorageUri(source.bucketName(), source.objectName()),
+                source.bucketName(),
+                source.objectName(),
+                uploadRequest.file.fileName(),
+                source.contentType(),
+                source.sizeBytes());
+
+        return createProjectFromStoredSource(userId, storedSourceRequest, source);
     }
 
     private Uni<Project> createProjectFromStoredSource(
