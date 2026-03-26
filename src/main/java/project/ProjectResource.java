@@ -25,6 +25,7 @@ import project.dto.ProjectCompletionDTO;
 import project.dto.ProjectClipResponse;
 import project.dto.ProjectDetailsResponse;
 import project.dto.ProjectRequest;
+import project.dto.ProjectSourceEstimateResponse;
 import project.dto.ProjectUploadRequest;
 
 @Path("/project")
@@ -87,11 +88,8 @@ public class ProjectResource {
 
     @GET
     @Path("/estimate-cost")
-    public Uni<Response> estimateCost(@jakarta.ws.rs.QueryParam("url") String url) {
-        return Uni.createFrom()
-                .item(Response.status(Response.Status.GONE)
-                        .entity("{\"error\": \"URL ingestion is disabled\"}")
-                        .build());
+    public Uni<ProjectSourceEstimateResponse> estimateCost(@jakarta.ws.rs.QueryParam("url") String url) {
+        return projectService.estimateSource(url);
     }
 
     @GET

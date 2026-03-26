@@ -1,4 +1,15 @@
 package integration.dto;
 
-public record VideoMetadataDTO(Integer duration) {
+public record VideoMetadataDTO(
+        String normalizedUrl,
+        String provider,
+        String title,
+        Integer duration,
+        Boolean ingestable,
+        String failureCode,
+        String failureMessage) {
+
+    public VideoMetadataDTO(Integer duration) {
+        this(null, null, null, duration, true, null, null);
+    }
 }

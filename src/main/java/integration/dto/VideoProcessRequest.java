@@ -3,6 +3,7 @@ package integration.dto;
 public class VideoProcessRequest {
 
     public String projectId;
+    public String sourceOriginUrl;
     public String sourceUrl;
     public String customPrompt;
     public String sourceStorageUri;
@@ -34,6 +35,7 @@ public class VideoProcessRequest {
             String projectId,
             String userId,
             String customPrompt,
+            String sourceOriginUrl,
             String sourceStorageUri,
             String sourceBucket,
             String sourceObjectPath,
@@ -43,6 +45,8 @@ public class VideoProcessRequest {
         this.projectId = projectId;
         this.userId = userId;
         this.customPrompt = customPrompt;
+        this.sourceOriginUrl = sourceOriginUrl;
+        this.sourceUrl = sourceOriginUrl;
         this.sourceStorageUri = sourceStorageUri;
         this.sourceBucket = sourceBucket;
         this.sourceObjectPath = sourceObjectPath;

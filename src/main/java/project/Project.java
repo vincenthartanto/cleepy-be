@@ -46,6 +46,15 @@ public class Project extends PanacheEntityBase {
     @Column(name = "source_url")
     public String sourceUrl;
 
+    @Column(name = "source_kind")
+    public String sourceKind;
+
+    @Column(name = "source_origin_url")
+    public String sourceOriginUrl;
+
+    @Column(name = "source_provider")
+    public String sourceProvider;
+
     @Column(name = "source_storage_uri")
     public String sourceStorageUri;
 

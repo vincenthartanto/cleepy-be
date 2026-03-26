@@ -14,6 +14,7 @@ import clip.ClipRepository;
 import common.dto.request.SpecificationRequest;
 import common.dto.response.PagedResponse;
 import integration.AiClipperClient;
+import integration.dto.VideoMetadataDTO;
 import integration.dto.VideoProcessRequest;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import io.quarkus.vertx.VertxContextSupport;
@@ -33,6 +34,7 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 import project.dto.ProjectCompletionDTO;
 import project.dto.ProjectRequest;
+import project.dto.ProjectSourceEstimateResponse;
 import project.dto.ProjectUploadRequest;
 import user.PlanMode;
 import user.User;
@@ -45,6 +47,9 @@ public class ProjectService {
     private static final Logger LOG = Logger.getLogger(ProjectService.class);
     private static final long MAX_UPLOAD_SIZE_BYTES = 2L * 1024 * 1024 * 1024;
     private static final int MAX_AUTO_REQUEUE_ATTEMPTS = 1;
+    private static final String SOURCE_KIND_UPLOAD_FILE = "UPLOAD_FILE";
+    private static final String SOURCE_KIND_YOUTUBE_URL = "YOUTUBE_URL";
+    private static final String SOURCE_PROVIDER_YOUTUBE = "youtube";
     private static final Set<String> ALLOWED_VIDEO_CONTENT_TYPES = Set.of(
             "video/mp4",
             "video/quicktime",
@@ -118,13 +123,24 @@ public class ProjectService {
                 });
     }
 
+    @WithSession
+    public Uni<ProjectSourceEstimateResponse> estimateSource(String url) {
+        if (url == null || url.isBlank()) {
+            throw new BadRequestException("url is required.");
+        }
+        return aiClipperClient.getMetadata(url.trim())
+                .map(metadata -> ProjectSourceEstimateResponse.from(
+                        metadata,
+                        calculateCost(metadata.duration())));
+    }
+
     @WithTransaction
     public Uni<Project> createProject(String userId, ProjectRequest request) {
-        validateCreateRequest(userId, request);
-        StorageService.StoredObjectMetadata source = storageService.getObjectMetadata(
-                request.sourceBucket(),
-                request.sourceObjectPath());
-        return createProjectFromStoredSource(userId, request, source);
+        return switch (normalizeSourceKind(request)) {
+            case SOURCE_KIND_YOUTUBE_URL -> createProjectFromSourceUrl(userId, request);
+            case SOURCE_KIND_UPLOAD_FILE -> createProjectFromStoredSourceRequest(userId, request);
+            default -> Uni.createFrom().failure(new BadRequestException("Unsupported sourceKind."));
+        };
     }
 
     public Uni<Project> createProjectFromUpload(String userId, ProjectUploadRequest request) {
@@ -270,12 +286,13 @@ public class ProjectService {
         String reason = completion.error() != null && !completion.error().isBlank()
                 ? completion.error()
                 : "Worker reported FAILED status via webhook.";
+        applySourceArtifactMetadata(project, completion);
         project.lastFailedStage = completion.failedStage();
         project.lastFailureReason = reason;
 
         if (Boolean.TRUE.equals(completion.retryable())
                 && project.workerRetryCount < MAX_AUTO_REQUEUE_ATTEMPTS
-                && sourceStillExists(project)) {
+                && retrySourceStillAvailable(project)) {
             project.workerRetryCount += 1;
             project.status = "PROCESSING";
             return projectRepository.persist(project)
@@ -294,6 +311,7 @@ public class ProjectService {
         project.status = completion.status();
         project.lastFailedStage = null;
         project.lastFailureReason = null;
+        applySourceArtifactMetadata(project, completion);
 
         if (completion.thumbnailUrl() != null && !completion.thumbnailUrl().isBlank()) {
             project.thumbnailUrl = completion.thumbnailUrl();
@@ -440,6 +458,7 @@ public class ProjectService {
                     project.workerRetryCount = 0;
                     project.lastFailedStage = null;
                     project.lastFailureReason = null;
+                    project.sourceKind = normalizeSourceKind(request);
                     project.sourceBucket = source.bucketName();
                     project.sourceObjectPath = source.objectName();
                     project.sourceStorageUri = buildStorageUri(source.bucketName(), source.objectName());
@@ -452,6 +471,72 @@ public class ProjectService {
                                     .replaceWith(saved)
                                     .onFailure().recoverWithUni(t -> {
                                         LOG.errorf(t, "Failed to reach AI Worker for project %s", saved.id);
+                                        return markProjectFailed(saved.id,
+                                                "AI service unavailable: " + t.getMessage(),
+                                                "dispatch")
+                                                        .replaceWith(saved);
+                                    }));
+                });
+    }
+
+    private Uni<Project> createProjectFromStoredSourceRequest(String userId, ProjectRequest request) {
+        validateStoredSourceRequest(userId, request);
+        StorageService.StoredObjectMetadata source = storageService.getObjectMetadata(
+                request.sourceBucket(),
+                request.sourceObjectPath());
+        return createProjectFromStoredSource(userId, request, source);
+    }
+
+    private Uni<Project> createProjectFromSourceUrl(String userId, ProjectRequest request) {
+        validateSourceUrlRequest(request);
+        return aiClipperClient.getMetadata(request.sourceOriginUrl().trim())
+                .map(this::requireIngestableMetadata)
+                .flatMap(metadata -> createProjectFromResolvedSourceUrl(userId, request, metadata));
+    }
+
+    private Uni<Project> createProjectFromResolvedSourceUrl(String userId, ProjectRequest request, VideoMetadataDTO metadata) {
+        String resolvedTitle = request.title() != null && !request.title().isBlank()
+                ? request.title().trim()
+                : resolveDefaultTitle(metadata);
+        Integer duration = metadata.duration() != null ? metadata.duration() : request.durationSeconds();
+        int normalizedDuration = duration != null ? duration : 0;
+        int cost = calculateCost(normalizedDuration);
+
+        ProjectRequest normalizedRequest = new ProjectRequest(
+                resolvedTitle,
+                normalizeOptionalText(request.customPrompt()),
+                normalizedDuration,
+                SOURCE_KIND_YOUTUBE_URL,
+                metadata.normalizedUrl() != null ? metadata.normalizedUrl() : request.sourceOriginUrl().trim(),
+                metadata.provider() != null ? metadata.provider() : normalizeSourceProvider(request.sourceProvider()),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+
+        return findOrCreateUser(userId)
+                .flatMap(user -> deductCredits(user, cost, normalizedDuration))
+                .flatMap(user -> {
+                    Project project = projectMapper.toEntity(normalizedRequest, userId);
+                    project.status = "PROCESSING";
+                    project.title = normalizedRequest.title();
+                    project.customPrompt = normalizedRequest.customPrompt();
+                    project.durationSeconds = normalizedDuration;
+                    project.cost = cost;
+                    project.workerRetryCount = 0;
+                    project.lastFailedStage = null;
+                    project.lastFailureReason = null;
+                    project.sourceKind = normalizedRequest.sourceKind();
+                    project.sourceOriginUrl = normalizedRequest.sourceOriginUrl();
+                    project.sourceProvider = normalizedRequest.sourceProvider();
+
+                    return projectRepository.persist(project)
+                            .flatMap(saved -> dispatchProcessing(saved)
+                                    .replaceWith(saved)
+                                    .onFailure().recoverWithUni(t -> {
+                                        LOG.errorf(t, "Failed to reach AI Worker for URL project %s", saved.id);
                                         return markProjectFailed(saved.id,
                                                 "AI service unavailable: " + t.getMessage(),
                                                 "dispatch")
@@ -475,6 +560,7 @@ public class ProjectService {
                 project.id.toString(),
                 project.userId,
                 project.customPrompt,
+                project.sourceOriginUrl,
                 project.sourceStorageUri,
                 project.sourceBucket,
                 project.sourceObjectPath,
@@ -516,6 +602,17 @@ public class ProjectService {
     }
 
     private void validateCreateRequest(String userId, ProjectRequest request) {
+        if (request == null) {
+            throw new BadRequestException("Project request is required.");
+        }
+        if (normalizeSourceKind(request).equals(SOURCE_KIND_UPLOAD_FILE)) {
+            validateStoredSourceRequest(userId, request);
+            return;
+        }
+        validateSourceUrlRequest(request);
+    }
+
+    private void validateStoredSourceRequest(String userId, ProjectRequest request) {
         if (request == null || request.title() == null || request.title().isBlank()) {
             throw new BadRequestException("title is required.");
         }
@@ -524,6 +621,15 @@ public class ProjectService {
             throw new BadRequestException("Uploaded source metadata is required.");
         }
         validatePendingObjectOwnership(userId, request.sourceBucket(), request.sourceObjectPath());
+    }
+
+    private void validateSourceUrlRequest(ProjectRequest request) {
+        if (request == null) {
+            throw new BadRequestException("Project request is required.");
+        }
+        if (request.sourceOriginUrl() == null || request.sourceOriginUrl().isBlank()) {
+            throw new BadRequestException("sourceOriginUrl is required.");
+        }
     }
 
     private void validatePendingObjectOwnership(String userId, String bucket, String objectPath) {
@@ -592,6 +698,71 @@ public class ProjectService {
             return null;
         }
         return value.trim();
+    }
+
+    private String normalizeSourceKind(ProjectRequest request) {
+        if (request == null) {
+            return SOURCE_KIND_UPLOAD_FILE;
+        }
+        if (request.sourceKind() != null && !request.sourceKind().isBlank()) {
+            return request.sourceKind().trim().toUpperCase(Locale.ROOT);
+        }
+        if (request.sourceOriginUrl() != null && !request.sourceOriginUrl().isBlank()) {
+            return SOURCE_KIND_YOUTUBE_URL;
+        }
+        return SOURCE_KIND_UPLOAD_FILE;
+    }
+
+    private String normalizeSourceProvider(String sourceProvider) {
+        if (sourceProvider == null || sourceProvider.isBlank()) {
+            return SOURCE_PROVIDER_YOUTUBE;
+        }
+        return sourceProvider.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private VideoMetadataDTO requireIngestableMetadata(VideoMetadataDTO metadata) {
+        if (metadata == null) {
+            throw new BadRequestException("Could not resolve media metadata.");
+        }
+        if (!Boolean.TRUE.equals(metadata.ingestable())) {
+            throw new BadRequestException(resolveMetadataFailureMessage(metadata));
+        }
+        return metadata;
+    }
+
+    private String resolveMetadataFailureMessage(VideoMetadataDTO metadata) {
+        if (metadata.failureMessage() != null && !metadata.failureMessage().isBlank()) {
+            return metadata.failureMessage();
+        }
+        return "This YouTube URL cannot be processed.";
+    }
+
+    private String resolveDefaultTitle(VideoMetadataDTO metadata) {
+        if (metadata.title() != null && !metadata.title().isBlank()) {
+            return metadata.title().trim();
+        }
+        return "YouTube Video";
+    }
+
+    private void applySourceArtifactMetadata(Project project, ProjectCompletionDTO completion) {
+        if (completion.sourceStorageUri() != null && !completion.sourceStorageUri().isBlank()) {
+            project.sourceStorageUri = completion.sourceStorageUri();
+        }
+        if (completion.sourceBucket() != null && !completion.sourceBucket().isBlank()) {
+            project.sourceBucket = completion.sourceBucket();
+        }
+        if (completion.sourceObjectPath() != null && !completion.sourceObjectPath().isBlank()) {
+            project.sourceObjectPath = completion.sourceObjectPath();
+        }
+        if (completion.sourceFileName() != null && !completion.sourceFileName().isBlank()) {
+            project.sourceFileName = completion.sourceFileName();
+        }
+        if (completion.sourceContentType() != null && !completion.sourceContentType().isBlank()) {
+            project.sourceContentType = completion.sourceContentType();
+        }
+        if (completion.sourceSizeBytes() != null && completion.sourceSizeBytes() > 0) {
+            project.sourceSizeBytes = completion.sourceSizeBytes();
+        }
     }
 
     private void applyProjectMediaUrls(Project project) {
@@ -679,8 +850,18 @@ public class ProjectService {
         return storageService.objectExists(project.sourceBucket, project.sourceObjectPath);
     }
 
+    private boolean retrySourceStillAvailable(Project project) {
+        return sourceStillExists(project)
+                || (SOURCE_KIND_YOUTUBE_URL.equals(project.sourceKind)
+                        && project.sourceOriginUrl != null
+                        && !project.sourceOriginUrl.isBlank());
+    }
+
     private void ensureSourceAvailable(Project project) {
-        if (!sourceStillExists(project)) {
+        if (!retrySourceStillAvailable(project)) {
+            if (SOURCE_KIND_YOUTUBE_URL.equals(project.sourceKind)) {
+                throw new BadRequestException("The original YouTube source is no longer available. Please create the project again.");
+            }
             throw new BadRequestException("Uploaded source has expired. Please re-upload the video.");
         }
     }
@@ -689,7 +870,9 @@ public class ProjectService {
         if (project.sourceBucket == null || project.sourceObjectPath == null) {
             return;
         }
-        storageService.deleteObject(project.sourceBucket, project.sourceObjectPath);
+        if (!SOURCE_KIND_YOUTUBE_URL.equals(project.sourceKind)) {
+            storageService.deleteObject(project.sourceBucket, project.sourceObjectPath);
+        }
         storageService.deletePrefix(project.sourceBucket, "checkpoints/" + project.userId + "/" + project.id + "/");
     }
 

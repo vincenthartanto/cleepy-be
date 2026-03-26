@@ -12,6 +12,9 @@ public class ProjectMapper {
         project.userId = userId;
         project.status = "PROCESSING";
         project.customPrompt = request.customPrompt();
+        project.sourceKind = request.sourceKind();
+        project.sourceOriginUrl = request.sourceOriginUrl();
+        project.sourceProvider = request.sourceProvider();
         project.sourceStorageUri = request.sourceStorageUri();
         project.sourceBucket = request.sourceBucket();
         project.sourceObjectPath = request.sourceObjectPath();

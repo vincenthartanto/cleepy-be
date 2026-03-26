@@ -311,6 +311,107 @@ public class ProjectServiceTest {
 
         @Test
         @RunOnVertxContext
+        void testEstimateSource_whenYoutubeMetadataAvailable_shouldReturnEstimatedCost(UniAsserter asserter) {
+                String url = "https://youtu.be/abc123";
+                when(aiClipperClient.getMetadata(url)).thenReturn(Uni.createFrom().item(
+                                new VideoMetadataDTO(
+                                                "https://www.youtube.com/watch?v=abc123",
+                                                "youtube",
+                                                "Example Video",
+                                                125,
+                                                true,
+                                                null,
+                                                null)));
+
+                asserter.assertThat(() -> projectService.estimateSource(url),
+                                estimate -> {
+                                        assertEquals("https://www.youtube.com/watch?v=abc123", estimate.normalizedUrl());
+                                        assertEquals("youtube", estimate.provider());
+                                        assertEquals("Example Video", estimate.title());
+                                        assertEquals(125, estimate.durationSeconds());
+                                        assertEquals(2, estimate.estimatedCost());
+                                        assertTrue(estimate.ingestable());
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
+        void testCreateProject_whenYoutubeUrlRequest_shouldPersistAndDispatchSourceOriginUrl(UniAsserter asserter) {
+                String userId = "firebase-uid-youtube";
+                String rawUrl = "https://youtu.be/abc123";
+                String normalizedUrl = "https://www.youtube.com/watch?v=abc123";
+                ProjectRequest request = new ProjectRequest(
+                                "",
+                                "find the best hooks",
+                                null,
+                                "YOUTUBE_URL",
+                                rawUrl,
+                                "youtube",
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null);
+
+                User mockUser = new User();
+                mockUser.id = userId;
+                mockUser.creditsRemaining = 5;
+                mockUser.planMode = user.PlanMode.PRO;
+
+                Project mockProject = new Project();
+                mockProject.id = UUID.randomUUID();
+                mockProject.userId = userId;
+
+                when(aiClipperClient.getMetadata(rawUrl)).thenReturn(Uni.createFrom().item(
+                                new VideoMetadataDTO(
+                                                normalizedUrl,
+                                                "youtube",
+                                                "Example Video",
+                                                125,
+                                                true,
+                                                null,
+                                                null)));
+                when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+                when(userRepository.persist(any(User.class)))
+                                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+                when(projectMapper.toEntity(any(ProjectRequest.class), eq(userId))).thenReturn(mockProject);
+                when(projectRepository.persist(any(Project.class)))
+                                .thenAnswer(invocation -> Uni.createFrom().item((Project) invocation.getArgument(0)));
+                when(aiClipperClient.processVideo(any(VideoProcessRequest.class)))
+                                .thenReturn(Uni.createFrom().item(new VideoProcessResponse("Processing started",
+                                                mockProject.id.toString())));
+
+                asserter.assertThat(() -> projectService.createProject(userId, request),
+                                project -> {
+                                        assertEquals("PROCESSING", project.status);
+                                        assertEquals("YOUTUBE_URL", project.sourceKind);
+                                        assertEquals(normalizedUrl, project.sourceOriginUrl);
+                                        assertEquals("youtube", project.sourceProvider);
+                                        assertEquals("Example Video", project.title);
+                                        assertEquals(125, project.durationSeconds);
+                                        assertEquals(2, project.cost);
+                                        assertEquals(3, mockUser.creditsRemaining);
+
+                                        ArgumentCaptor<ProjectRequest> requestCaptor = ArgumentCaptor
+                                                        .forClass(ProjectRequest.class);
+                                        verify(projectMapper).toEntity(requestCaptor.capture(), eq(userId));
+                                        ProjectRequest persistedRequest = requestCaptor.getValue();
+                                        assertEquals("Example Video", persistedRequest.title());
+                                        assertEquals("YOUTUBE_URL", persistedRequest.sourceKind());
+                                        assertEquals(normalizedUrl, persistedRequest.sourceOriginUrl());
+
+                                        ArgumentCaptor<VideoProcessRequest> processRequestCaptor = ArgumentCaptor
+                                                        .forClass(VideoProcessRequest.class);
+                                        verify(aiClipperClient).processVideo(processRequestCaptor.capture());
+                                        VideoProcessRequest dispatchedRequest = processRequestCaptor.getValue();
+                                        assertEquals(normalizedUrl, dispatchedRequest.sourceOriginUrl);
+                                        assertNull(dispatchedRequest.sourceStorageUri);
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
         void testCreateProjectFromUpload_whenValidRequest_shouldUploadViaBackendAndDispatchWorker(UniAsserter asserter)
                         throws Exception {
                 String userId = "firebase-uid-upload";
@@ -506,6 +607,59 @@ public class ProjectServiceTest {
                                         verify(clipRepository, never()).persist(anyList());
                                         verify(userRepository).persist(any(User.class));
                                         verify(projectRepository).persist(any(Project.class));
+                                });
+        }
+
+        @Test
+        @RunOnVertxContext
+        void testHandleCompletion_whenFailedAfterSourceUpload_shouldPersistSourceArtifactMetadata(UniAsserter asserter) {
+                UUID projectId = UUID.randomUUID();
+                String userId = "user-source-artifact";
+                Project mockProject = new Project();
+                mockProject.id = projectId;
+                mockProject.userId = userId;
+                mockProject.status = "PROCESSING";
+                mockProject.cost = 1;
+                mockProject.sourceKind = "YOUTUBE_URL";
+                mockProject.sourceOriginUrl = "https://www.youtube.com/watch?v=abc123";
+
+                User mockUser = new User();
+                mockUser.id = userId;
+                mockUser.creditsRemaining = 5;
+
+                ProjectCompletionDTO completion = new ProjectCompletionDTO(
+                                "FAILED",
+                                "Worker failed after downloading source",
+                                "transcription",
+                                false,
+                                null,
+                                null,
+                                null,
+                                null,
+                                "gs://bucket/source/user/project/source.mp4",
+                                "bucket",
+                                "source/user/project/source.mp4",
+                                "source.mp4",
+                                "video/mp4",
+                                2048L,
+                                Collections.emptyList(),
+                                null);
+
+                when(projectRepository.findById(projectId)).thenReturn(Uni.createFrom().item(mockProject));
+                when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(mockUser));
+                when(userRepository.persist(any(User.class)))
+                                .thenAnswer(invocation -> Uni.createFrom().item((User) invocation.getArgument(0)));
+                when(projectRepository.persist(any(Project.class)))
+                                .thenAnswer(invocation -> Uni.createFrom().item((Project) invocation.getArgument(0)));
+
+                asserter.assertThat(() -> projectService.handleCompletion(projectId, completion),
+                                result -> {
+                                        assertEquals("FAILED", mockProject.status);
+                                        assertEquals("bucket", mockProject.sourceBucket);
+                                        assertEquals("source/user/project/source.mp4", mockProject.sourceObjectPath);
+                                        assertEquals("source.mp4", mockProject.sourceFileName);
+                                        assertEquals("video/mp4", mockProject.sourceContentType);
+                                        assertEquals(2048L, mockProject.sourceSizeBytes);
                                 });
         }
 
