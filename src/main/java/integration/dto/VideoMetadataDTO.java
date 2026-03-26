@@ -5,11 +5,12 @@ public record VideoMetadataDTO(
         String provider,
         String title,
         Integer duration,
+        String thumbnail,
         Boolean ingestable,
         String failureCode,
         String failureMessage) {
 
     public VideoMetadataDTO(Integer duration) {
-        this(null, null, null, duration, true, null, null);
+        this(null, null, null, duration, null, true, null, null);
     }
 }

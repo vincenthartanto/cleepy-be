@@ -319,6 +319,7 @@ public class ProjectServiceTest {
                                                 "youtube",
                                                 "Example Video",
                                                 125,
+                                                null,
                                                 true,
                                                 null,
                                                 null)));
@@ -369,6 +370,7 @@ public class ProjectServiceTest {
                                                 "youtube",
                                                 "Example Video",
                                                 125,
+                                                null,
                                                 true,
                                                 null,
                                                 null)));
