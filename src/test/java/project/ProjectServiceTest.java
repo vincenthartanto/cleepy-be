@@ -491,7 +491,7 @@ public class ProjectServiceTest {
                                                         .forClass(VideoProcessRequest.class);
                                         verify(aiClipperClient).processVideo(processRequestCaptor.capture());
                                         VideoProcessRequest dispatchedRequest = processRequestCaptor.getValue();
-                                        assertEquals("large-v3", dispatchedRequest.modelSize);
+                                        assertEquals("large-v3-turbo", dispatchedRequest.modelSize);
                                         assertNull(dispatchedRequest.language);
                                         verify(storageService, never()).deleteObject(anyString(), anyString());
                                 });
